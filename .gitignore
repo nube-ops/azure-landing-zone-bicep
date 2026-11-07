@@ -1,0 +1,13 @@
+# Ignore live Bicep parameter files containing local environment/subscription IDs
+*.bicepparam
+!*.bicepparam.example
+
+# Local environment configuration or secret files
+.env
+*.local
+
+# Visual Studio Code workspace settings
+.vscode/
+
+# Azure CLI / PowerShell login or cache tokens
+.azure/

@@ -1,0 +1,141 @@
+name: Azure Landing Zone Foundation
+
+# Scope: tenant-level foundation only (management groups, policies, subscription
+# associations), all defined in environments/<env>/main.bicep.
+# Resource groups and workload resources are deployed by deploy-resources.yml.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: what-if previews changes; deploy applies them.
+        type: choice
+        options: [what-if, deploy]
+        default: what-if
+
+permissions:
+  contents: read
+
+# Tenant-scope deployments must never overlap.
+concurrency:
+  group: deploy-foundation
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate Bicep
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build and lint the foundation template
+        run: |
+          # Retry the Bicep install to absorb transient runner network drops.
+          for attempt in 1 2 3; do
+            az bicep install && break
+            echo "Bicep install failed (attempt $attempt/3). Retrying in 5s..."
+            sleep 5
+          done
+
+          # main.bicep pulls in every foundation module, so this covers the whole scope.
+          az bicep build --file environments/prod/main.bicep --stdout > /dev/null
+          az bicep lint --file environments/prod/main.bicep
+
+  deploy:
+    name: Foundation ${{ inputs.mode }} (${{ matrix.environment }})
+    needs: validate
+    runs-on: ubuntu-latest
+
+    # One job serves every environment; add an entry (for example dev) to scale out.
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [prod]
+
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      ENV_DIR: environments/${{ matrix.environment }}
+      TENANT_ROOT_MANAGEMENT_GROUP_ID: ${{ secrets.TENANT_ROOT_MANAGEMENT_GROUP_ID }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Generate parameter file from template
+        env:
+          CORP_SUB_ID: ${{ secrets.CORP_SUB_ID }}
+          ONLINE_SUB_ID: ${{ secrets.ONLINE_SUB_ID }}
+          CONNECTIVITY_SUB_ID: ${{ secrets.CONNECTIVITY_SUB_ID }}
+          IDENTITY_SUB_ID: ${{ secrets.IDENTITY_SUB_ID }}
+          OPERATIONS_SUB_ID: ${{ secrets.OPERATIONS_SUB_ID }}
+        run: |
+          # Copy the scrubbed public template, then swap each placeholder for its secret.
+          # All five subscription IDs are needed here for the subscription associations.
+          cp "$ENV_DIR/main.bicepparam.example" "$ENV_DIR/main.bicepparam"
+
+          declare -A subs=(
+            [11111111-1111-1111-1111-111111111111]="$CORP_SUB_ID"
+            [22222222-2222-2222-2222-222222222222]="$ONLINE_SUB_ID"
+            [33333333-3333-3333-3333-333333333333]="$CONNECTIVITY_SUB_ID"
+            [44444444-4444-4444-4444-444444444444]="$IDENTITY_SUB_ID"
+            [55555555-5555-5555-5555-555555555555]="$OPERATIONS_SUB_ID"
+          )
+          for placeholder in "${!subs[@]}"; do
+            if [[ -z "${subs[$placeholder]}" ]]; then
+              echo "::error::A subscription secret is empty (placeholder $placeholder)."
+              exit 1
+            fi
+            sed -i "s/$placeholder/${subs[$placeholder]}/g" "$ENV_DIR/main.bicepparam"
+          done
+
+      - name: Resolve deployment location from main.bicepparam
+        id: cfg
+        run: |
+          # main.bicepparam is the single source of truth (same approach as Get-BicepParamConfig).
+          az bicep install
+          az bicep build-params --file "$ENV_DIR/main.bicepparam" \
+            --outfile "$RUNNER_TEMP/params.json" --no-restore
+
+          LOCATION=$(jq -r '
+            (.parameters.regionalConfig.value | map(select(.isPrimary)) | .[0].location) // ""
+          ' "$RUNNER_TEMP/params.json")
+
+          : "${LOCATION:?no regionalConfig entry with isPrimary: true in main.bicepparam}"
+          echo "location=$LOCATION" >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate to Azure via OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      - name: Warm up access tokens for every accessible subscription
+        run: |
+          # Role assignments at '/' can take a few minutes to replicate; poll each subscription.
+          for sub_id in $(az account list --query "[].id" -o tsv); do
+            for attempt in 1 2 3 4 5; do
+              if az account set --subscription "$sub_id" --output none 2>/dev/null; then
+                echo "Context established for $sub_id"
+                break
+              fi
+              echo "Token replication pending for $sub_id (attempt $attempt/5). Retrying in 3s..."
+              sleep 3
+            done
+          done
+
+      - name: Tenant foundation ${{ inputs.mode }}
+        env:
+          MODE: ${{ inputs.mode }}
+          LOCATION: ${{ steps.cfg.outputs.location }}
+        run: |
+          # Same command for both modes: only the verb differs (DRY).
+          if [ "$MODE" = "deploy" ]; then ACTION=create; else ACTION=what-if; fi
+
+          az deployment tenant "$ACTION" \
+            --location "$LOCATION" \
+            --template-file "$ENV_DIR/main.bicep" \
+            --parameters "$ENV_DIR/main.bicepparam"

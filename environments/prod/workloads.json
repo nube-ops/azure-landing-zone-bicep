@@ -1,0 +1,26 @@
+{
+  "$schema": "./workloads.schema.json",
+  "bootstrapWorkload": "operations", 
+  "workloads": {
+    "connectivity": {
+      "domain": "net", "team": { "name": "Networking", "slug": "net-platform", "role": "Reader" },
+      "tags": { "CostCenter": "CC-1000" }
+    },
+    "operations": {
+      "domain": "ops", "team": { "name": "Cloud Operations", "slug": "ops-platform", "role": "Reader" },
+      "tags": { "CostCenter": "CC-2000" }
+    },
+    "identity": {
+      "domain": "id", "team": { "name": "Identity Core", "slug": "id-platform", "role": "Reader" },
+      "tags": { "CostCenter": "CC-3000" }
+    },
+    "corp": {
+      "domain": "corp", "team": { "name": "Corporate Data", "slug": "corp-platform", "role": "Reader" },
+      "tags": { "CostCenter": "CC-4000" } 
+    },
+    "online": {
+      "domain": "online", "team": { "name": "Public Applications", "slug": "online-platform", "role": "Reader" },
+      "tags": { "CostCenter": "CC-5000" } 
+    }
+  }
+}
