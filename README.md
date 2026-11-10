@@ -3,8 +3,8 @@
 * Designed for tenant-level deployments, this codebase automates enterprise governance, management group hierarchies, identity foundations, and subscription associations securely and repeatably.
 
 ### Engineering Highlights & Architecture Principles
-* **100% DRY Parameterization:** Tenant hierarchy and subscription mappings are dynamically synthesized from a single `orgName` variable.
-* **Zero-Touch Security:** Eliminates long-lived service principal secrets entirely using GitHub OIDC Federated Credentials (`api://AzureADTokenExchange`).
+* **Data-Driven Parameterization:** Management group names derive from `orgName` and `geoPrefix`, while the hierarchy, regions, and subscription mappings are structured data contained within a single parameter file, keeping `main.bicep` entirely free of organization-specific values.
+* **Credential-Free CI/CD Security:** GitHub Actions authenticates via short-lived OIDC federated credentials directly to user-assigned managed identities with no stored secrets or long-lived certificates.
 * **Idempotent Automation:** PowerShell bootstrap scripts feature state-aware content-hash convergence and zero-write optimizations.
 * **Enterprise Governance:** Implements CAF-aligned management group structures, automated subscription discovery, and policy inheritance out-of-the-box.
 * **Policy-as-Code Governance:** Enforces mandatory security benchmarks, compliance standards, and automated tagging rules directly at the management group root.
@@ -58,7 +58,7 @@ azure-landing-zone-iac/
 │       ├── identity.bicep          <-- Subscription Scope: Identity & Directory Services
 │       ├── operations.bicep        <-- Subscription Scope: Logs & Automation
 │       ├── online.bicep            <-- Subscription Scope: Public Web & Edge Routing
-│       └── platform-teams.json     <-- Single source of truth for identity and metadata
+│       └── workloads.json     <-- Single source of truth for identity and metadata
 ├── modules/
 │   ├── management-groups/
 │   │   ├── managementGroup.bicep
@@ -70,19 +70,40 @@ azure-landing-zone-iac/
 │   └── landing-zones/
 ├── scripts/
 │   ├── bootstrap/
-│   │   ├── Initialize-TenantOidc.ps1       <-- Handles Tenant Root & Deployer Group UMI/OIDC
-│   │   ├── Initialize-SubscriptionSecrets.ps1 <-- Synchronizes IDs to GitHub Secrets
-│   │   ├── Initialize-SubscriptionOidc.ps1    <-- Handles Subscription-Scoped Workload UMI & RBAC
-│   │   ├── Initialize-PlatformTeams.ps1    <-- Handles Core Identity Foundations
-│   └── common/
-│       ├── Test-EnvironmentPreflight.ps1
-│       └── Invoke-WithRetry.ps1
+│   │   └── Initialize-TenantOidc.ps1
+│   ├── LandingZone.Bootstrap/
+│   │   ├── LandingZone.Bootstrap.psd1
+│   │   ├── LandingZone.Bootstrap.psm1
+│   │   ├── prerequisites.psd1
+│   │   ├── Private/
+│   │   │   ├── Get-OidcSubject.ps1
+│   │   │   ├── Get-TagDrift.ps1
+│   │   │   ├── New-CheckResult.ps1
+│   │   │   ├── Set-FederatedCredential.ps1
+│   │   │   ├── Set-UserAssignedIdentity.ps1
+│   │   │   └── Test-RootRbacAccess.ps1
+│   │   └── Public/
+│   │       ├── Get-BicepParamConfig.ps1
+│   │       ├── Get-ResourceName.ps1
+│   │       ├── Get-WorkloadConfig.ps1
+│   │       ├── Initialize-BootstrapResourceGroup.ps1
+│   │       ├── Initialize-DeployerIdentity.ps1
+│   │       ├── Invoke-WithRetry.ps1
+│   │       ├── Preflight.Checks.ps1
+│   │       ├── Resolve-GitHubRepository.ps1
+│   │       ├── Set-GitHubSecret.ps1
+│   │       ├── Set-ResourceGroup.ps1
+│   │       ├── Set-RoleAssignment.ps1
+│   │       ├── Show-DeployerIdentity.ps1
+│   │       └── Write-BootstrapLog.ps1
+│   └── tools/
+│       └── Update-ReadmePrerequisites.ps1
 ├── .gitignore
 └── README.md
 ```
 
 ### Prerequisites
-Minimum tool versions are defined in `scripts/common/prerequisites.psd1` and enforced by: `./scripts/bootstrap/Test-Prerequisites.ps1`
+Minimum tool versions are defined in `scripts\LandingZone.Bootstrap\prerequisites.psd1`.
 
 #### **Permissions:**
 * **Tenant Root Scope (`/`):** Owner or User Access Administrator permissions at the Azure AD Tenant root scope to create top-level Management Groups and assign tenant-level RBAC roles.
@@ -106,7 +127,7 @@ pwsh ./scripts/tools/Update-ReadmePrerequisites.ps1
 * **Idempotent Automation:** PowerShell bootstrap scripts utilize defensive, state-aware checking to ensure safe, repeatable multi-run execution without manual state cleanup.
 * **Secure CI/CD Authentication:** Avoids long-lived client secrets by leveraging GitHub OIDC Federated Credentials for secure, token-based cloud deployment.
 * **Modularization ("Don't Repeat Yourself"):** Reusable modules decouple logic from configuration, minimizing code duplication and reducing human error.
-* **Least Privilege:** Follows CAF guidelines for separating management concerns into dedicated administrative boundaries.
+* **Least Privilege:** Follows CAF guidelines for separating management concerns into dedicated administrative boundaries. *(Note: While Contributor and User Access Administrator roles at the tenant root are highly privileged by operational necessity for automated governance and dynamic RBAC assignment, the deployment identity is strictly scoped via OIDC trust to the main branch. Hardening options for production include scoping via a custom role, applying a User Access Administrator condition, or splitting into distinct identities).*
 
 ### 🚀 Deployment Instructions
 To maintain strict adherence to DRY, Idempotency, and Cloud Governance best practices, follow these sequential phases to bootstrap your enterprise landing zone environment.
@@ -129,7 +150,7 @@ To maintain strict adherence to DRY, Idempotency, and Cloud Governance best prac
 | **Identity** | `identity` | `sub-contoso-us-identity` |
 | **Operations** | `operations` | `sub-contoso-us-operations` |
 ---
-* **Single Source of Truth (DRY Naming):** Changing `orgName` and `deploymentRegion` at the top of `environments/prod/main.bicepparam` automatically cascades custom naming across all management groups and resource hierarchies. The subscriptionAssociations block at the bottom maps explicit workload domains (such as corp, online, and connectivity), which are then automatically parsed and synchronized with your actual Azure Subscription IDs by the initialization script in Phase 2.
+* **Single Source of Truth & Local Parameter Rule:** Always edit your organizational topology and metadata in `environments/prod/main.bicepparam.example` as the baseline template. Treat your local `environments/prod/main.bicepparam` file as a local working copy (`copy main.bicepparam.example main.bicepparam`) where live subscription IDs are populated. Because your local parameter file contains sensitive production IDs, it is excluded via `.gitignore` and must never be committed to public repositories.
 
 ### Phase 2: Automated Subscription Discovery & Parameter Synchronization
 * Once your subscriptions are active, authenticate your CLI tools and run the subscription management script from your repository root:
