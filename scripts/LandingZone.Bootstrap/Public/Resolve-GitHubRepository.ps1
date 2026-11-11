@@ -3,15 +3,21 @@ function Resolve-GitHubRepository {
     param([string]$Owner, [string]$Repository)
 
     # Explicit values win; the git remote is only parsed to fill what is missing.
-    if ($Owner -and $Repository) { return [pscustomobject]@{ Owner = $Owner; Repository = $Repository } }
+    $resolvedOwner = $Owner
+    $resolvedRepo  = $Repository
 
-    $remoteUrl = "$(git config --get remote.origin.url 2>$null)".Trim()
-    if (-not ($remoteUrl -match 'github\.com[:/]([^/]+)/([^/]+?)(?:\.git)?/?$')) {
-        throw "Git remote 'origin' is missing or not a GitHub URL (found: '$remoteUrl')."
+    if (-not ($Owner -and $Repository)) {
+        $remoteUrl = "$(git config --get remote.origin.url 2>$null)".Trim()
+        if (-not ($remoteUrl -match 'github\.com[:/]([^/]+)/([^/]+?)(?:\.git)?/?$')) {
+            throw "Git remote 'origin' is missing or not a GitHub URL (found: '$remoteUrl')."
+        }
+        if (-not $resolvedOwner) { $resolvedOwner = $Matches[1] }
+        if (-not $resolvedRepo)  { $resolvedRepo  = $Matches[2] }
     }
 
     [pscustomobject]@{
-        Owner      = if ($Owner)      { $Owner }      else { $Matches[1] }
-        Repository = if ($Repository) { $Repository } else { $Matches[2] }
+        Owner      = $resolvedOwner
+        Repository = $resolvedRepo
+        Slug       = "$resolvedOwner/$resolvedRepo"
     }
 }

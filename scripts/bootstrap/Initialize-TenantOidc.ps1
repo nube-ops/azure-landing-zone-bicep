@@ -25,19 +25,19 @@ Assert-Preflight @(
     Test-BicepParamFile  -Path $BicepParamPath
     Test-JsonFile        -Path $WorkloadsPath
     Test-AzureSession
-    Test-GitHubSession
-    Test-GitHubRemote    -Owner $GitHubOwner -Repository $GitHubRepository
-    Test-GitHubRepoAdmin -Owner $GitHubOwner -Repository $GitHubRepository
+    Test-GitHubAccess    -Owner $GitHubOwner -Repository $GitHubRepository
 ) -Title 'ENVIRONMENT & ACCESS PREFLIGHT'
 
 # --- Context (safe now) ---
 $config            = Get-BicepParamConfig -Path $BicepParamPath
 $repo              = Resolve-GitHubRepository -Owner $GitHubOwner -Repository $GitHubRepository
-$tenantId          = (az account show --query tenantId --output tsv).Trim()
+$tenantId          = Get-AzureTenantId
 $bootstrapWorkload = (Get-Content -LiteralPath $WorkloadsPath -Raw | ConvertFrom-Json).bootstrapWorkload
 $wl             = Get-WorkloadConfig -Path $WorkloadsPath -Workload $bootstrapWorkload -Environment $Environment
 $subscriptionId = $config.Subscriptions[$bootstrapWorkload]
-if (-not $subscriptionId) { throw "No subscription mapped for workload '$bootstrapWorkload'." }
+Assert-Preflight @(
+    Test-SubscriptionIdFormat -Workload $bootstrapWorkload -SubscriptionId $subscriptionId
+) -Title 'CONFIGURATION PREFLIGHT'
 
 $name     = @{ Domain = $wl.Domain; Purpose = 'tenant'; Environment = $Environment; RegionCode = $config.PrimaryRegionCode }
 $rgName   = Get-ResourceName -Type rg @name
@@ -48,7 +48,7 @@ $rootMgId = "/providers/Microsoft.Management/managementGroups/$tenantId"
 # --- Stage 2: target gate ---
 Assert-Preflight @(
     Test-TargetSubscription      -SubscriptionId $subscriptionId -TenantId $tenantId
-    Test-ProviderRegistered      -SubscriptionId $subscriptionId -Namespace 'Microsoft.Resources'
+    Test-ProviderRegistered      -SubscriptionId $subscriptionId -Namespace 'Microsoft.Resources'Import-Module ./scripts/LandingZone.Bootstrap -Force -ErrorAction Stop
     Test-ProviderRegistered      -SubscriptionId $subscriptionId -Namespace 'Microsoft.ManagedIdentity'
     Test-CanWriteRoleAssignments -Scope '/'
 ) -Title 'AZURE TARGET & RBAC PREFLIGHT'

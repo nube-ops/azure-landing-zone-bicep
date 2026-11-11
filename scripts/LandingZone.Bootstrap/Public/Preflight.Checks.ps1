@@ -15,7 +15,7 @@
 #>
 
 # ---------------------------------------------------------------- Local environment
-#   Test-Tooling, Test-BicepParamFile, Test-JsonFile
+#   Test-Tooling, Test-BicepParamFile, Test-JsonFile, Test-SubscriptionIdFormat
 
 function Test-Tooling {
     <#
@@ -115,8 +115,45 @@ function Test-JsonFile {
     }
 }
 
+function Test-SubscriptionIdFormat {
+    <#
+    .SYNOPSIS
+        Checks that a subscription ID is a real GUID and not a scrubbed placeholder (1111…, 2222…).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Workload,
+        [string]$SubscriptionId
+    )
+
+    $name = "SubscriptionId:$Workload"
+    if ($SubscriptionId -notmatch '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$') {
+        return New-CheckResult -Name $name -Ok $false -Message "Subscription ID ($Workload): '$SubscriptionId' is not a valid GUID" `
+            -Remediation 'Set real subscription IDs in main.bicepparam.'
+    }
+    if ($SubscriptionId -match '^(.)\1{7}-(\1{4}-){3}\1{12}$') {
+        return New-CheckResult -Name $name -Ok $false -Message "Subscription ID ($Workload): '$SubscriptionId' is still a placeholder" `
+            -Remediation 'Replace the placeholder in main.bicepparam with the real subscription ID.'
+    }
+    New-CheckResult -Name $name -Ok $true -Message "Subscription ID ($Workload): valid"
+}
+
 # ---------------------------------------------------------------- GitHub
-#   Test-GitHubSession, Test-GitHubRemote, Test-GitHubRepoAdmin
+
+# Test-GitHubAccess = Test-GitHubSession, Test-GitHubRemote, Test-GitHubRepoAdmin
+
+function Test-GitHubAccess {
+    <#
+    .SYNOPSIS
+        Orchestrates the three GitHub checks every bootstrap entry point needs: session, remote, repo admin.
+    #>
+    [CmdletBinding()]
+    param([string]$Owner, [string]$Repository)
+
+    Test-GitHubSession
+    Test-GitHubRemote    -Owner $Owner -Repository $Repository
+    Test-GitHubRepoAdmin -Owner $Owner -Repository $Repository
+}
 
 function Test-GitHubSession {
     <#
@@ -203,9 +240,6 @@ function Test-AzureSession {
     }
     New-CheckResult -Name 'AzureSession' -Ok $false -Message 'Azure CLI: no live session' -Remediation "Run 'az login' and retry."
 }
-
-
-# ---------------------------------------------------------------- Stage 2
 
 function Test-TargetSubscription {
     <#

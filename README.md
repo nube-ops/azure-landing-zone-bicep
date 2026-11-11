@@ -41,7 +41,7 @@ Tenant Root Group
 ### Repository Structure
 Configuration Management: Fully DRY parameterization allows enterprise deployment naming and hierarchy trees to be dynamically synthesized from a single orgName variable declaration inside main.bicepparam.
 ```text
-azure-landing-zone-iac/
+azure-landing-zone-bicep/
 │
 ├── .github/
 │   └── workflows/
@@ -70,7 +70,8 @@ azure-landing-zone-iac/
 │   └── landing-zones/
 ├── scripts/
 │   ├── bootstrap/
-│   │   └── Initialize-TenantOidc.ps1
+│   │   ├── Sync-Subscriptions.ps1      <-- Phase 2: discover subscriptions, fill main.bicepparam, publish *_SUB_ID secrets
+│   │   └── Initialize-TenantOidc.ps1   <-- Phase 3: tenant-level deployer identity
 │   ├── LandingZone.Bootstrap/
 │   │   ├── LandingZone.Bootstrap.psd1
 │   │   ├── LandingZone.Bootstrap.psm1
@@ -83,14 +84,18 @@ azure-landing-zone-iac/
 │   │   │   ├── Set-UserAssignedIdentity.ps1
 │   │   │   └── Test-RootRbacAccess.ps1
 │   │   └── Public/
+│   │       ├── Find-WorkloadSubscription.ps1
+│   │       ├── Get-AzureTenantId.ps1
 │   │       ├── Get-BicepParamConfig.ps1
 │   │       ├── Get-ResourceName.ps1
 │   │       ├── Get-WorkloadConfig.ps1
+│   │       ├── Get-WorkloadSecretName.ps1
 │   │       ├── Initialize-BootstrapResourceGroup.ps1
 │   │       ├── Initialize-DeployerIdentity.ps1
 │   │       ├── Invoke-WithRetry.ps1
 │   │       ├── Preflight.Checks.ps1
 │   │       ├── Resolve-GitHubRepository.ps1
+│   │       ├── Set-BicepParamSubscription.ps1
 │   │       ├── Set-GitHubSecret.ps1
 │   │       ├── Set-ResourceGroup.ps1
 │   │       ├── Set-RoleAssignment.ps1
@@ -107,6 +112,8 @@ Minimum tool versions are defined in `scripts\LandingZone.Bootstrap\prerequisite
 
 #### **Permissions:**
 * **Tenant Root Scope (`/`):** Owner or User Access Administrator permissions at the Azure AD Tenant root scope to create top-level Management Groups and assign tenant-level RBAC roles.
+* **Target Subscriptions:** Visible to your signed-in account (any role, such as Reader) so discovery can find them in `az account list`.
+* **GitHub Repository:** Admin access, required to write Actions secrets.
 
 #### **Required Tools & Versions:**
 * **Minimum versions are defined in** `scripts/LandingZone.Bootstrap/prerequisites.psd1`. Run the following command to update the table below. 
@@ -121,10 +128,12 @@ pwsh ./scripts/tools/Update-ReadmePrerequisites.ps1
 | gh | 2.50 | `winget install --id GitHub.Cli` |
 | git | 2.40 | `winget install --id Git.Git` |
 <!-- prerequisites:end -->
+*The Bicep CLI is installed automatically by `az bicep` on first use; the scripts need it to read `main.bicepparam`.
 
 #### **Security & Best Practices:**
-* **Zero Hardcoded Secrets:** All environment-specific subscription IDs, client IDs, and names are injected dynamically via parameters or parameter files.
-* **Idempotent Automation:** PowerShell bootstrap scripts utilize defensive, state-aware checking to ensure safe, repeatable multi-run execution without manual state cleanup.
+* **Zero Hardcoded Secrets:** No subscription ID is committed. Live IDs exist only in a gitignored local `main.bicepparam` and in GitHub Actions secrets, populated by `Sync-Subscriptions.ps1`; client IDs are published by the OIDC bootstrap scripts.
+* **Log Hygiene:** The sync script logs workload and subscription *names*, not IDs. IDs appear only in failure remediation commands, where they must be copy-pasteable.
+* **Idempotent Automation:** PowerShell bootstrap scripts converge to the desired state (get-or-create, drift-only writes) and perform zero writes when nothing has changed.multi-run execution without manual state cleanup.
 * **Secure CI/CD Authentication:** Avoids long-lived client secrets by leveraging GitHub OIDC Federated Credentials for secure, token-based cloud deployment.
 * **Modularization ("Don't Repeat Yourself"):** Reusable modules decouple logic from configuration, minimizing code duplication and reducing human error.
 * **Least Privilege:** Follows CAF guidelines for separating management concerns into dedicated administrative boundaries. *(Note: While Contributor and User Access Administrator roles at the tenant root are highly privileged by operational necessity for automated governance and dynamic RBAC assignment, the deployment identity is strictly scoped via OIDC trust to the main branch. Hardening options for production include scoping via a custom role, applying a User Access Administrator condition, or splitting into distinct identities).*
@@ -134,12 +143,12 @@ To maintain strict adherence to DRY, Idempotency, and Cloud Governance best prac
 
 ### SECTION 1: Platform Foundation & Governance
 * **Phase 1:** Pre-Provisioning & Subscription Naming Conventions
-* **Phase 2:** Automated Subscription Discovery & Parameter Synchronization (`Initialize-SubscriptionSecrets.ps1`)
+* **Phase 2:** Subscription Discovery, Parameter Sync & CI Secrets (`Sync-Subscriptions.ps1`)
 * **Phase 3:** OIDC Bootstrap & Identity Trust Configuration (`Initialize-TenantOidc.ps1`)
 * **Phase 4:** Management Group Hierarchy & Policy-as-Code Deployment (`main.bicep`)
 
 ### Phase 1: Pre-Provisioning & Subscription Naming Conventions
-* Prior to running the bootstrap scripts or deployment pipeline, ensure your target enterprise subscriptions are pre-provisioned within your Azure tenant and that the `main.bicepparam` subscription associations align with your Azure subscription names.
+* Prior to running the bootstrap scripts or deployment pipeline, ensure your target enterprise subscriptions are pre-provisioned within your Azure tenant and named according to the convention below. Phase 2 discovers them by name, so the naming convention is the contract.
 * **Billing & Creation Constraints:** Standard Pay-As-You-Go or personal Azure accounts are typically capped at a maximum of 5 active subscriptions and often throttle rapid programmatic creation (limiting provisioning to one subscription per 24-hour window). For a complete landing zone rollout, ensure these subscriptions are created beforehand via your Azure Portal or enterprise agreement billing profile.
 ---
 | Workload Domain | Required Naming Keyword | Example Subscription Name |
@@ -150,21 +159,27 @@ To maintain strict adherence to DRY, Idempotency, and Cloud Governance best prac
 | **Identity** | `identity` | `sub-contoso-us-identity` |
 | **Operations** | `operations` | `sub-contoso-us-operations` |
 ---
-* **Single Source of Truth & Local Parameter Rule:** Always edit your organizational topology and metadata in `environments/prod/main.bicepparam.example` as the baseline template. Treat your local `environments/prod/main.bicepparam` file as a local working copy (`copy main.bicepparam.example main.bicepparam`) where live subscription IDs are populated. Because your local parameter file contains sensitive production IDs, it is excluded via `.gitignore` and must never be committed to public repositories.
+* **Naming rule:** each subscription name must end in `-<keyword>` (for example `-corp`), and exactly one *enabled* subscription per keyword may exist in the signed-in tenant.
+* **Single Source of Truth & Local Parameter Rule:** Always edit your organizational topology and metadata in `environments/prod/main.bicepparam.example` as the baseline template. Treat your local `environments/prod/main.bicepparam` file as a local working copy (`copy main.bicepparam.example main.bicepparam`). Phase 2 fills in the live subscription IDs, so never type them by hand. Because your local parameter file contains sensitive production IDs, it is excluded via `.gitignore` and must never be committed to public repositories.
 
-### Phase 2: Automated Subscription Discovery & Parameter Synchronization
-* Once your subscriptions are active, authenticate your CLI tools and run the subscription management script from your repository root:
+### Phase 2: Subscription Discovery, Parameter Sync & CI Secrets
+* **Prerequisites:** `az login` and `gh auth login` in the target tenant and repository, a local `main.bicepparam` (Phase 1), and subscriptions named per the Phase 1 convention.
+* Preview, then apply, from the repository root:
 ```powershell
-.\scripts\bootstrap\Initialize-SubscriptionSecrets.ps1
+.\scripts\bootstrap\Sync-Subscriptions.ps1 -WhatIf   # preview: planned ID changes and secret names; writes nothing
+.\scripts\bootstrap\Sync-Subscriptions.ps1
 ```
-What Initialize-SubscriptionSecrets.ps1 Accomplishes:
-* **Automated Preflight Diagnostics:** Validates active Azure CLI (az) and GitHub CLI (gh) sessions, verifying repository ownership context and failing fast with explicit remediation guides if missing.
-* **Intelligent Context Auto-Discovery:** Natively resolves local Git remote repository metadata (Owner and Repository) to target the correct GitHub environment without hardcoded configurations.
-* **Tenant Subscription Mapping:** Queries active enterprise Azure subscriptions, filtering dynamically across core workload domains (connectivity, corp, online, identity, operations) and validating enabled states.
-* **Idempotent Bicepparam Auto-Population (DRY Architecture):** Programmatically parses and injects discovered subscription IDs directly into target arrays within 'main.bicepparam' without manual input.
-* **Content-Hash Convergence & Zero-Write Optimization:** Evaluates existing file contents before writing, skipping disk mutations if state is already fully synchronized to prevent unnecessary file lock churn.
-* **Structural Diff Auditing:** Employs `git diff --no-index` against a temporary backup to prove isolated parameter modifications and guarantee absolute zero unintended drift.
-* **Automated CI/CD Secret Syncing:** Authenticates via the GitHub CLI to securely upsert required workload subscription IDs straight into GitHub Actions repository settings, complete with live audit tables.
+What `Sync-Subscriptions.ps1` does (Azure → `main.bicepparam` → GitHub secrets):
+* **Preflight gates:** Verifies tooling versions, the parameter file, a live Azure session, GitHub authentication, the git remote, and repository admin access before touching anything.
+* **Discovers by convention:** For each workload in `main.bicepparam`, finds the one enabled subscription in your tenant whose name ends in `-<workload>`. Zero or multiple matches abort with one message listing every offending workload; nothing is guessed.
+* **Replaces placeholders only:** Swaps placeholder IDs (`1111…`) for discovered IDs everywhere they appear in the file, including where an ID is reused (policy exemptions). An ID that is already real is kept unless you pass `-Force`.
+* **Converges idempotently:** When nothing needs to change, it writes nothing and reports `[IDEMPOTENT]`.
+* **Validates before publishing:** Every ID must be a real GUID and not a placeholder before any secret is written.
+* **Publishes CI secrets:** Upserts one `<WORKLOAD>_SUB_ID` secret per workload (for example `CORP_SUB_ID`) and prints a workload-to-secret summary.
+
+Full behavior and parameters: `Get-Help .\scripts\bootstrap\Sync-Subscriptions.ps1 -Full`
+
+**Troubleshooting:** `expected one enabled subscription named '*-corp', found 0` means the name does not end in `-corp`, the subscription is disabled, or it is in a different tenant than your signed-in session (`az login --tenant <id>`). `found 2` or more means duplicates: rename or disable the extras.
 
 ### Phase 3: Configure Primary & Multi-Region HA Architecture
 * Designate your primary deployment location with `isPrimary: true` in your environment parameters file (`environments/prod/main.bicepparam`), while aligning your secondary region with its Azure-paired region for high availability (HA), disaster recovery (DR) readiness, and automated cross-region policy compliance.

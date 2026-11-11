@@ -69,21 +69,7 @@ PowerShellVersion = '7.4'
 # NestedModules = @()
 
 # Functions to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no functions to export.
-FunctionsToExport = @(
-    'Get-BicepParamConfig',
-    'Get-ResourceName',
-    'Get-WorkloadConfig',
-    'Initialize-BootstrapResourceGroup',
-    'Initialize-DeployerIdentity',
-    'Invoke-WithRetry',
-    'Preflight.Checks',
-    'Resolve-GitHubRepository',
-    'Set-GitHubSecret',
-    'Set-ResourceGroup',
-    'Set-RoleAssignment',
-    'Show-DeployerIdentity',
-    'Write-BootstrapLog'
-)
+FunctionsToExport = '*'   # The .psm1 loader in Public/ is the single source of truth
 
 # Cmdlets to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no cmdlets to export.
 CmdletsToExport = @()
