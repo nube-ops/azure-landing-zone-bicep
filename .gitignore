@@ -11,3 +11,6 @@
 
 # Azure CLI / PowerShell login or cache tokens
 .azure/
+
+# Compiled ARM output from `az bicep build` (derived from main.bicep; never commit)
+environments/*/main.json

@@ -50,7 +50,7 @@ Assert-Preflight @(
     Test-TargetSubscription      -SubscriptionId $subscriptionId -TenantId $tenantId
     Test-ProviderRegistered      -SubscriptionId $subscriptionId -Namespace 'Microsoft.Resources'
     Test-ProviderRegistered      -SubscriptionId $subscriptionId -Namespace 'Microsoft.ManagedIdentity'
-    Test-CanWriteRoleAssignments -Scope '/'
+    Test-CanWriteRoleAssignment -Scope '/'
 ) -Title 'AZURE TARGET & RBAC PREFLIGHT'
 
 # --- Provision: RG (get-or-create) -> UMI -> federated credential -> roles ---

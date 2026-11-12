@@ -1,4 +1,3 @@
-# AFTER – Public\Set-GitHubSecret.ps1
 function Set-GitHubSecret {
     <# Upserts a repo (or environment) secret. 'gh secret set' overwrites, so reruns are safe.
        The value goes through stdin and is never printed. #>

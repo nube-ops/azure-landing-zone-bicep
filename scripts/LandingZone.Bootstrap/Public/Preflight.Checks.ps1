@@ -295,7 +295,7 @@ function Test-ProviderRegistered {
         -Remediation "az provider register --namespace $Namespace --subscription $SubscriptionId"
 }
 
-function Test-CanWriteRoleAssignments {
+function Test-CanWriteRoleAssignment {
     <#
     .SYNOPSIS
         Checks the caller’s effective permissions allow role assignment writes at a scope.
