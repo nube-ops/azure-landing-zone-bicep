@@ -50,7 +50,7 @@ azure-landing-zone-bicep/
 ├── .github/
 │   └── workflows/
 │       ├── deploy-foundation.yml        <-- MGs, policies & governance, subscription association
-│       └── deploy-resources.yml         <-- *planned* Subscription-scoped VNets, NSGs and workload RGs
+│       └── deploy-resources.yml         <-- *(planned)* Subscription-scoped VNets, NSGs and workload RGs
 ├── environments/
 │   ├── dev/
 │   └── prod/
@@ -162,7 +162,7 @@ Run the phases in order.
 | 2 | Subscription discovery, parameter sync and CI secrets | `Sync-Subscriptions.ps1` |
 | 3 | Tenant deployer identity and OIDC trust | `Initialize-TenantOidc.ps1` |
 | 4 | Management group hierarchy and policy-as-code deployment | `deploy-foundation.yml` (`main.bicep`) |
-| 5 | Subscription-scoped connectivity hub (`connectivity.bicep`, `modules/networking/`) | `deploy-resources.yml` |
+| 5 | Subscription-scoped connectivity hub (`connectivity.bicep`, `modules/networking/`) | `deploy-resources.yml` *(planned)* |
 
 Both scripts accept the same context parameters, and both default to the `prod` environment.
 

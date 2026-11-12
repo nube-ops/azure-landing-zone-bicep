@@ -2,7 +2,7 @@ name: Azure Landing Zone Foundation
 
 # Scope: tenant-level foundation only (management groups, policies, subscription
 # associations), all defined in environments/<env>/main.bicep.
-# Resource groups and workload resources are deployed by deploy-resources.yml.
+# Resource groups and workload resources will be deployed by the planned deploy-resources.yml.
 
 on:
   workflow_dispatch:
