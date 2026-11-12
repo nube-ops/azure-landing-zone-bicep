@@ -23,6 +23,11 @@ function Set-BicepParamSubscription {
     $effective = @{}
     $replaced  = 0
 
+    $dupes = $Current.GetEnumerator() | Group-Object Value | Where-Object Count -gt 1
+    if ($dupes -and -not $Force) {
+        throw "Workloads share the same subscription ID value; cannot safely replace by text: $($dupes.Name -join ', ')"
+    }
+
     foreach ($workload in ($Current.Keys | Sort-Object)) {
         $old = $Current[$workload]
         $new = $Desired[$workload]

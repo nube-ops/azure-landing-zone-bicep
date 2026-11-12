@@ -24,7 +24,7 @@ function Find-WorkloadSubscription {
         $pattern = "(^|-)$([regex]::Escape($w))$"
         $match   = @($subs | Where-Object { $_.name -match $pattern })
         if ($match.Count -eq 1) {
-            $found[$w] = $match[0].id
+            $result[$w] = $match[0].id
             Write-BootstrapLog "${w}: matched subscription '$($match[0].name)'"
         }
         else { $problems += "  $w : expected one enabled subscription named '*-$w', found $($match.Count)" }

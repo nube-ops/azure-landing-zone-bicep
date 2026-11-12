@@ -48,7 +48,7 @@ $rootMgId = "/providers/Microsoft.Management/managementGroups/$tenantId"
 # --- Stage 2: target gate ---
 Assert-Preflight @(
     Test-TargetSubscription      -SubscriptionId $subscriptionId -TenantId $tenantId
-    Test-ProviderRegistered      -SubscriptionId $subscriptionId -Namespace 'Microsoft.Resources'Import-Module ./scripts/LandingZone.Bootstrap -Force -ErrorAction Stop
+    Test-ProviderRegistered      -SubscriptionId $subscriptionId -Namespace 'Microsoft.Resources'
     Test-ProviderRegistered      -SubscriptionId $subscriptionId -Namespace 'Microsoft.ManagedIdentity'
     Test-CanWriteRoleAssignments -Scope '/'
 ) -Title 'AZURE TARGET & RBAC PREFLIGHT'
@@ -72,10 +72,9 @@ $deployer = Initialize-DeployerIdentity `
     )
 
 # --- Secrets differ per entry point, so they stay here ---
-$slug = "$($repo.Owner)/$($repo.Repository)"
-Set-GitHubSecret -Repository $slug -Name 'AZURE_CLIENT_ID'                   -Value $deployer.ClientId
-Set-GitHubSecret -Repository $slug -Name 'AZURE_TENANT_ID'                   -Value $tenantId
-Set-GitHubSecret -Repository $slug -Name 'TENANT_ROOT_MANAGEMENT_GROUP_ID'   -Value $rootMgId
+Set-GitHubSecret -Repository $repo.Slug -Name 'AZURE_CLIENT_ID'                 -Value $deployer.ClientId
+Set-GitHubSecret -Repository $repo.Slug -Name 'AZURE_TENANT_ID'                 -Value $tenantId
+Set-GitHubSecret -Repository $repo.Slug -Name 'TENANT_ROOT_MANAGEMENT_GROUP_ID' -Value $rootMgId
 
 Show-DeployerIdentity -Identity $deployer
 Write-BootstrapLog 'Tenant deployer bootstrap complete.' -Level Success
