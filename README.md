@@ -50,7 +50,7 @@ azure-landing-zone-bicep/
 ├── .github/
 │   └── workflows/
 │       ├── deploy-foundation.yml        <-- MGs, policies & governance, subscription association
-│       └── deploy-resources.yml         <-- Subscription-scoped VNets, NSGs and workload RGs
+│       └── deploy-resources.yml         <-- *planned* Subscription-scoped VNets, NSGs and workload RGs
 ├── environments/
 │   ├── dev/
 │   └── prod/
