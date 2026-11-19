@@ -23,7 +23,7 @@ Tenant Root Group
 │   │  │     └─ rg-net-hub-prod-cus-01      # Core Hub VNet, Azure Firewall, VPN Gateways
 │   │  ├─ mg-contoso-us-identity
 │   │  │  └─ sub-contoso-us-identity (Subscription)
-│   │  │     ├─ rg-core-identity-cus-01 # Core Domain Controllers & Directory Sync
+│   │  │     ├─ rg-id-core-prod-cus-01 # Core Domain Controllers & Directory Sync
 │   │  └─ mg-contoso-us-operations
 │   │     └─ sub-contoso-us-operations (Subscription)
 │   │        ├─ rg-ops-tenant-prod-cus-01   # Tenant-root deployer UMI (restricted access)
