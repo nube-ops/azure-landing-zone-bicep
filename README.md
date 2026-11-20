@@ -5,8 +5,6 @@
 
 A tenant-scope implementation of the Microsoft Cloud Adoption Framework (CAF) Enterprise-Scale architecture, written in Azure Bicep and supported by idempotent PowerShell automation that bootstraps secure, credential-free CI/CD.
 
-It automates the management group hierarchy, policy governance, subscription associations and the deployer identities that GitHub Actions uses, and every step is safe to re-run.
-
 ## Engineering Highlights
 
 * **Data-driven:** Hierarchy, regions and subscription mappings live in one parameter file, and workload identity and tags in one schema-validated registry (`workloads.json`). `main.bicep` holds no organization-specific values.
@@ -60,15 +58,15 @@ pwsh ./scripts/bootstrap/Initialize-SubscriptionOidc.ps1   # Phase 5: per-subscr
 
 ## Security Model
 
-* **No committed subscription IDs:** Live IDs exist only in the gitignored local `main.bicepparam` and in GitHub Actions secrets, both populated by `Sync-Subscriptions.ps1`. `Initialize-TenantOidc.ps1` publishes the client, tenant and root management group IDs, and `Initialize-SubscriptionOidc.ps1` publishes one `<WORKLOAD>_CLIENT_ID` per workload.
+* **No committed IDs:** Live subscription IDs exist only in the gitignored local `main.bicepparam` and in GitHub Actions secrets, both populated by `Sync-Subscriptions.ps1`. Tenant, client and root management group IDs are published as Actions secrets (and bootstrap scripts print target subscription, client and principal IDs for audit).
 * **Log hygiene:** `Sync-Subscriptions.ps1` logs workload and subscription *names*, not IDs. `Initialize-TenantOidc.ps1` and `Initialize-SubscriptionOidc.ps1` print the target subscription ID and the identity's client and principal IDs so the result can be audited.
 * **No long-lived credentials:** The deployer authenticates with GitHub OIDC federation. There are no client secrets to rotate or leak.
 * **Least privilege, with a documented trade-off:** The tenant deployer holds Contributor, Resource Policy Contributor and User Access Administrator at `/`. This is highly privileged by operational necessity, because it creates management groups, policies and RBAC at tenant scope. The blast radius is limited by the OIDC trust, which is scoped to a single repository and the `main` branch. Hardening options for production:
   * replace Contributor with a custom role limited to the required actions,
   * add a condition to User Access Administrator so it can only assign approved roles,
-  * split the identity into separate management-group and subscription deployers (...).
+  * split the identity into separate management-group and subscription deployers (Phase 5 provides the subscription deployers; narrowing the tenant deployer is the remaining step).
 
-  Because the trust is scoped to `main`, protect that branch (required reviews, no force-push) and keep `deploy-foundation.yml` on manual dispatch.
+Because the trust is scoped to `main`, protect that branch (required reviews, no force-push) and keep `deploy-foundation.yml` on manual dispatch.
 
 ## Deployment phases
 
@@ -117,10 +115,10 @@ Each script documents its own parameters: `Get-Help ./scripts/bootstrap/<script>
 azure-landing-zone-bicep/
 │
 ├── .github/
+│   ├── dependabot.yml                   <-- Weekly GitHub Actions version updates
 │   └── workflows/
 │       ├── deploy-foundation.yml        <-- MGs, policies & governance, subscription association
 │       └── deploy-resources.yml         <-- (planned) Subscription-scoped VNets, NSGs and workload RGs
-│       └── dependabot.yml               <-- (planned) Subscription-scoped VNets, NSGs and workload RGs
 ├── environments/
 │   ├── dev/                             <-- (planned)
 │   └── prod/
@@ -233,7 +231,7 @@ What `Initialize-TenantOidc.ps1` does:
 
 ### Phase 4: Management group topology and deployment
 
-> **Sequencing:** Complete Phase 3 first. Once `main.bicep` deploys the policy sets at the management group root, everything provisioned afterwards must comply with the tagging and allowed-location guardrails. Phase 5 is the first step that runs under them.
+> **Sequencing:** Complete Phases 2 and 3 first. Once `main.bicep` deploys the policy sets at the management group root, everything provisioned afterwards must comply with the tagging and allowed-location guardrails. Phase 5 is the first step that runs under them.
 
 * **Customizing the topology:** Edit the management group hierarchy and subscription associations in the committed `environments/prod/main.bicepparam.example`, and mirror the change in your local `main.bicepparam` so the bootstrap scripts see the same topology.
 * **Default deployment:** With no changes, the pipeline deploys the topology documented above.
@@ -287,8 +285,7 @@ Per workload, idempotently:
 * **Assigns least privilege:** Contributor on that subscription only, not at `/`.
 * **Publishes CI secrets:** one `<WORKLOAD>_CLIENT_ID` secret per workload (for example `CORP_CLIENT_ID`).
 
-This phase deploys no workload resources. `deploy-resources.yml` (Phase 6, planned) authenticates with these identities to do that.
+This phase deploys no workload resources.
 
-
-### Phase 6: Core Infrastructure and connectivity (planned)
-Subscription-scoped connectivity hub deployment (`connectivity.bicep` and `modules/networking/`), run by `deploy-resources.yml` with the Phase 5 identities.
+## Phase 6: Core Infrastructure and connectivity (planned)
+** `deploy-resources.yml` will deploy the connectivity hub (`connectivity.bicep`, `modules/networking/`) using the Phase 5 identities.
