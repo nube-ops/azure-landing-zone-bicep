@@ -2,6 +2,10 @@
 <#
 .SYNOPSIS
     Bootstraps the tenant-level deployer identity in its own resource group.
+.DESCRIPTION
+    Registers the required resource providers in the bootstrap subscription (only if needed),
+    then: resource group (get-or-create + tags) -> UMI -> GitHub OIDC credential -> roles at '/'
+    -> Actions secrets. Idempotent.
 .EXAMPLE
     pwsh ./scripts/bootstrap/Initialize-TenantOidc.ps1
 #>
@@ -19,7 +23,7 @@ Set-StrictMode -Version Latest
 
 Import-Module (Join-Path $PSScriptRoot '../LandingZone.Bootstrap') -Force
 
-# --- Stage 1: environment gate (only what this script needs) ---
+# --- Stage 1: environment gate ---
 Assert-Preflight @(
     Test-Tooling
     Test-BicepParamFile  -Path $BicepParamPath
@@ -39,6 +43,7 @@ Assert-Preflight @(
     Test-SubscriptionIdFormat -Workload $bootstrapWorkload -SubscriptionId $subscriptionId
 ) -Title 'CONFIGURATION PREFLIGHT'
 
+$requiredProviders = @('Microsoft.Resources', 'Microsoft.ManagedIdentity')
 $name     = @{ Domain = $wl.Domain; Purpose = 'tenant'; Environment = $Environment; RegionCode = $config.PrimaryRegionCode }
 $rgName   = Get-ResourceName -Type rg @name
 $identity = Get-ResourceName -Type id @name
@@ -48,12 +53,14 @@ $rootMgId = "/providers/Microsoft.Management/managementGroups/$tenantId"
 # --- Stage 2: target gate ---
 Assert-Preflight @(
     Test-TargetSubscription      -SubscriptionId $subscriptionId -TenantId $tenantId
-    Test-ProviderRegistered      -SubscriptionId $subscriptionId -Namespace 'Microsoft.Resources'
-    Test-ProviderRegistered      -SubscriptionId $subscriptionId -Namespace 'Microsoft.ManagedIdentity'
     Test-CanWriteRoleAssignment -Scope '/'
 ) -Title 'AZURE TARGET & RBAC PREFLIGHT'
 
-# --- Provision: RG (get-or-create) -> UMI -> federated credential -> roles ---
+# --- Provision: providers -> RG (get-or-create) -> UMI -> federated credential -> roles ---
+foreach ($r in Set-ProviderRegistration -SubscriptionId $subscriptionId -Namespace $requiredProviders) {
+    Write-BootstrapLog "Provider $($r.Namespace): $($r.Action)" -Level Success
+}
+
 $rg = Initialize-BootstrapResourceGroup -Config $config -Workload $bootstrapWorkload `
         -ResourceGroupName $rgName -Tags $tags
 
