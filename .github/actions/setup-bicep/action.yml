@@ -1,0 +1,13 @@
+name: Set up Bicep
+description: Installs the Bicep CLI through az, retrying transient network failures.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        for attempt in 1 2 3; do
+          az bicep install && exit 0
+          echo "Bicep install failed (attempt $attempt/3). Retrying in 5s..."
+          sleep 5
+        done
+        exit 1
