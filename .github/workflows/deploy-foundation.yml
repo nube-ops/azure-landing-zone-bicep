@@ -5,6 +5,8 @@ name: Azure Landing Zone Foundation
 # Resource groups and workload resources will be deployed by the planned deploy-resources.yml.
 
 on:
+  pull_request:
+    paths: ['environments/**', 'modules/**', '.github/**']
   workflow_dispatch:
     inputs:
       mode:
@@ -16,11 +18,6 @@ on:
 permissions:
   contents: read
 
-# Tenant-scope deployments must never overlap.
-concurrency:
-  group: deploy-foundation
-  cancel-in-progress: false
-
 jobs:
   validate:
     name: Validate Bicep
@@ -29,23 +26,28 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v7
 
-      - name: Build and lint the foundation template
-        run: |
-          # Retry the Bicep install to absorb transient runner network drops.
-          for attempt in 1 2 3; do
-            az bicep install && break
-            echo "Bicep install failed (attempt $attempt/3). Retrying in 5s..."
-            sleep 5
-          done
+      - uses: ./.github/actions/setup-bicep
 
-          # main.bicep pulls in every foundation module, so this covers the whole scope.
-          az bicep build --file environments/prod/main.bicep --stdout > /dev/null
-          az bicep lint --file environments/prod/main.bicep
+      - name: Build and lint every environment template
+        run: |
+          # main.bicep covers the foundation; the subscription-scope files are validated here too.
+          for f in environments/*/*.bicep; do
+            echo "Validating $f"
+            az bicep build --file "$f" --stdout > /dev/null
+            az bicep lint --file "$f"
+          done
 
   deploy:
     name: Foundation ${{ inputs.mode }} (${{ matrix.environment }})
     needs: validate
+    # The OIDC credential trusts refs/heads/main only, so pull requests validate but never deploy.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+
+    # Tenant-scope deployments must never overlap.
+    concurrency:
+      group: deploy-foundation
+      cancel-in-progress: false
 
     # One job serves every environment; add an entry (for example dev) to scale out.
     strategy:
@@ -84,18 +86,19 @@ jobs:
             [55555555-5555-5555-5555-555555555555]="$OPERATIONS_SUB_ID"
           )
           for placeholder in "${!subs[@]}"; do
-            if [[ -z "${subs[$placeholder]}" ]]; then
-              echo "::error::A subscription secret is empty (placeholder $placeholder)."
+            if [[ ! "${subs[$placeholder]}" =~ ^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$ ]]; then
+              echo "::error::A subscription secret is empty or not a GUID (placeholder $placeholder)."
               exit 1
             fi
             sed -i "s/$placeholder/${subs[$placeholder]}/g" "$ENV_DIR/main.bicepparam"
           done
 
+      - uses: ./.github/actions/setup-bicep
+
       - name: Resolve deployment location from main.bicepparam
         id: cfg
         run: |
           # main.bicepparam is the single source of truth (same approach as Get-BicepParamConfig).
-          az bicep install
           az bicep build-params --file "$ENV_DIR/main.bicepparam" \
             --outfile "$RUNNER_TEMP/params.json" --no-restore
 
@@ -132,10 +135,12 @@ jobs:
           MODE: ${{ inputs.mode }}
           LOCATION: ${{ steps.cfg.outputs.location }}
         run: |
-          # Same command for both modes: only the verb differs (DRY).
-          if [ "$MODE" = "deploy" ]; then ACTION=create; else ACTION=what-if; fi
+          # Same arguments for both modes: only the verb differs (DRY).
+          args=(--location "$LOCATION" --template-file "$ENV_DIR/main.bicep" --parameters "$ENV_DIR/main.bicepparam")
 
-          az deployment tenant "$ACTION" \
-            --location "$LOCATION" \
-            --template-file "$ENV_DIR/main.bicep" \
-            --parameters "$ENV_DIR/main.bicepparam"
+          if [ "$MODE" = "deploy" ]; then
+            # Print only the state: full output includes identity IDs, and public run logs are public.
+            az deployment tenant create "${args[@]}" --query properties.provisioningState --output tsv
+          else
+            az deployment tenant what-if "${args[@]}"
+          fi
