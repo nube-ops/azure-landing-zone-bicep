@@ -1,18 +1,30 @@
 # Azure Enterprise-Scale Landing Zone (Bicep & PowerShell Automation)
-**Demonstrates:** tenant-scope Bicep, Azure Policy as code, GitHub OIDC with managed identities, idempotent PowerShell automation, CI/CD with a lint gate and what-if preview.
+[![Foundation deploy](https://github.com/nube-ops/azure-landing-zone-bicep/actions/workflows/deploy-foundation.yml/badge.svg?branch=main)](https://github.com/nube-ops/azure-landing-zone-bicep/actions/workflows/deploy-foundation.yml)
 
-**Status:** Phases 1–5 implemented; Phase 6 (workload resources) planned.
+A tenant-scope Azure landing zone built from code and deployed with **no stored credentials**. Bicep creates the management group hierarchy, policy guardrails and subscription associations. Idempotent PowerShell builds the GitHub OIDC trust that the pipeline deploys through. Aligned to the Microsoft Cloud Adoption Framework (CAF) Enterprise-Scale reference architecture.
 
-A tenant-scope implementation of the Microsoft Cloud Adoption Framework (CAF) Enterprise-Scale architecture, written in Azure Bicep and supported by idempotent PowerShell automation that bootstraps secure, credential-free CI/CD.
+**Status:** Phases 1–5 implemented and run end to end against a live tenant. Phase 6 (workload resources) is planned.
 
-## Engineering Highlights
+## At a glance
 
-* **Data-driven:** Hierarchy, regions and subscription mappings live in one parameter file, and workload identity and tags in one schema-validated registry (`workloads.json`). `main.bicep` holds no organization-specific values.
-* **Credential-free CI/CD:** GitHub Actions authenticates with short-lived OIDC federated credentials on a user-assigned managed identity. No client secrets or certificates are stored.
-* **Idempotent automation:** The bootstrap scripts use get-or-create and drift-only writes. A re-run with nothing to change writes nothing, and each step reports what it did.
-* **Fail-fast preflight gates:** Each script validates tooling, sessions, permissions and data in read-only stages before it changes anything.
-* **Policy-as-Code governance:** Tagging, allowed-location and storage-hardening initiatives are enforced at the management group root. The Microsoft cloud security benchmark is assigned audit-only by default (`DoNotEnforce`) and is one parameter away from enforcement.
-* **DRY by construction:** One Bicep-compiled reader for `main.bicepparam` (never regex-parsed), and one definition each for resource naming, secret naming and retry logic.
+| | |
+| :--- | :--- |
+| **Scope** | Tenant root: 8 management groups, 5 subscriptions, 6 deployer identities |
+| **Governance** | 4 custom policy definitions and initiatives (tagging, allowed locations, storage hardening, tag audit), the Microsoft cloud security benchmark, and 1 scoped exemption |
+| **Identity** | GitHub OIDC federated credentials on user-assigned managed identities. Zero client secrets |
+| **Automation** | 3 PowerShell entry points on one shared module: preflight gates, idempotent writes, retry |
+| **CI/CD** | GitHub Actions: Bicep build and lint gate on every pull request, what-if or deploy on manual dispatch only, serialized tenant-scope runs |
+
+## What this demonstrates
+
+| Skill | Where to look |
+| :--- | :--- |
+| Bicep at tenant scope (modules, loops, exported functions, `.bicepparam`) | [`environments/prod/main.bicep`](environments/prod/main.bicep), [`modules/`](modules) |
+| Azure Policy as code (initiatives, assignments, exemptions) | [`modules/governance/`](modules/governance) |
+| Workload identity federation and RBAC | [`Initialize-TenantOidc.ps1`](scripts/bootstrap/Initialize-TenantOidc.ps1), [`Initialize-SubscriptionOidc.ps1`](scripts/bootstrap/Initialize-SubscriptionOidc.ps1) |
+| Production-style PowerShell (preflight, `-WhatIf`, retry, drift-only writes) | [`scripts/LandingZone.Bootstrap/`](scripts/LandingZone.Bootstrap) |
+| CI/CD with what-if preview and a lint gate | [`deploy-foundation.yml`](.github/workflows/deploy-foundation.yml) |
+| Naming and tagging standards that feed cost allocation | [`workloads.json`](environments/prod/workloads.json), [`naming.bicep`](modules/resource-groups/naming.bicep) |
 
 ## Architecture Topology
 ```text
@@ -22,80 +34,82 @@ Tenant Root Group
 │   │  ├─ mg-contoso-us-connectivity
 │   │  │  └─ sub-contoso-us-connectivity (Subscription)
 │   │  │     ├─ rg-net-deploy-prod-cus-01   # Deployer UMI + OIDC (this subscription only)
-│   │  │     └─ rg-net-hub-prod-cus-01      # (planned) Core Hub VNet, Azure Firewall, VPN Gateways
+│   │  │     └─ rg-net-hub-prod-cus-01      # (planned) Hub VNet, Azure Firewall, VPN gateways
 │   │  ├─ mg-contoso-us-identity
 │   │  │  └─ sub-contoso-us-identity (Subscription)
 │   │  │     ├─ rg-id-deploy-prod-cus-01    # Deployer UMI + OIDC (this subscription only)
-│   │  │     └─ rg-id-core-prod-cus-01      # (planned) Core Domain Controllers & Directory Sync
+│   │  │     └─ rg-id-core-prod-cus-01      # (planned) Domain controllers, directory sync
 │   │  └─ mg-contoso-us-operations
 │   │     └─ sub-contoso-us-operations (Subscription)
 │   │        ├─ rg-ops-tenant-prod-cus-01   # Tenant-root deployer UMI (restricted access)
 │   │        ├─ rg-ops-deploy-prod-cus-01   # Deployer UMI + OIDC (this subscription only)
-│   │        └─ rg-ops-logs-prod-cus-01     # (planned) Central Log Analytics, Automation, & Monitor Dashboards
+│   │        └─ rg-ops-logs-prod-cus-01     # (planned) Log Analytics, automation, dashboards
 │   └─ mg-contoso-us-landingzones
 │      ├─ mg-contoso-us-corp
 │      │  └─ sub-contoso-us-corp (Subscription)
 │      │     ├─ rg-corp-deploy-prod-cus-01    # Deployer UMI + OIDC (this subscription only)
-│      │     ├─ rg-corp-workloads-prod-cus-01 # (planned) Internal Line-of-Business Application Workloads
-│      │     └─ rg-corp-data-prod-cus-01      # (planned) Backend Databases & Persistent Storage Tiers
+│      │     ├─ rg-corp-workloads-prod-cus-01 # (planned) Line-of-business workloads
+│      │     └─ rg-corp-data-prod-cus-01      # (planned) Databases and persistent storage
 │      └─ mg-contoso-us-online
 │         └─ sub-contoso-us-online (Subscription)
 │            ├─ rg-online-deploy-prod-cus-01  # Deployer UMI + OIDC (this subscription only)
-│            ├─ rg-online-web-prod-cus-01     # (planned) Public-Facing Web Apps & Microservices
-│            └─ rg-online-edge-prod-cus-01    # (planned) Application Gateways, CDNs, & Front-End Routing
+│            ├─ rg-online-web-prod-cus-01     # (planned) Public web apps and microservices
+│            └─ rg-online-edge-prod-cus-01    # (planned) Application gateways, CDN, front-end routing
 ```
-Resource names follow `<type>-<domain>-<purpose>-<env>-<region>-<nn>`, defined only in `Get-ResourceName`.
+Resource names follow `<type>-<domain>-<purpose>-<env>-<region>-<nn>`, defined once per language: `Get-ResourceName` for the scripts and `naming.bicep` for Bicep. `contoso` is a placeholder organization name.
+
+
+## Design decisions
+
+* **Data-driven:** `main.bicep` holds no organization-specific values. Hierarchy, regions and subscription mappings live in one parameter file. Workload identity and tags live in a schema-validated registry (`workloads.json`).
+* **The compiler is the parser:** `main.bicepparam` is read by compiling it with `az bicep build-params`, never with regular expressions.
+* **Check everything, then write:** each script runs read-only preflight stages (tooling, sessions, permissions, data) and aborts with remediation steps before it changes anything.
+* **Idempotent by design:** get-or-create and drift-only writes. A re-run with nothing to change writes nothing. Tags are merged, so tags added by others are never removed.
+* **Audit before enforce:** the Microsoft cloud security benchmark is assigned as `DoNotEnforce` and is one parameter away from enforcement.
+* **Defensive details:** the OIDC subject uses the repository's immutable numeric IDs, policy assignment names are length-safe by construction, and role assignment retries absorb managed identity replication delay.
+
+## Security model
+
+* **No stored credentials:** GitHub Actions and the bootstrap identities authenticate with short-lived OIDC tokens. There are no client secrets or certificates to rotate or leak.
+* **No committed identifiers:** the committed parameter file uses placeholder subscription IDs. Live IDs exist only in a gitignored local file and in GitHub Actions secrets, and the workflow substitutes them at run time. History was scanned for live identifiers before publishing.
+* **Log hygiene:** `Sync-Subscriptions.ps1` logs workload and subscription names, not IDs. The two `Initialize-*Oidc.ps1` scripts print the target subscription, client and principal IDs so the result can be audited, so redact their output before sharing it.
+* **Least privilege, with documented trade-offs:**
+  * The tenant deployer holds Contributor, Resource Policy Contributor and User Access Administrator at `/`, because it creates management groups, policy and RBAC at tenant scope.
+  * Each subscription deployer holds Contributor on its own subscription only.
+  * Trust is scoped to one repository and the `main` branch, and the deploy job runs only on manual dispatch.
+* **Known limits and next hardening steps:**
+  * Replace Contributor at `/` with a custom role limited to the required actions.
+  * Add a condition to User Access Administrator so it can assign only approved roles.
+  * Secrets are repository-level and the credential subject is branch-based, so any workflow on `main` can use any deployer. Environment-scoped credentials would narrow this.
 
 ## Quick start
-Requires PowerShell 7.4+, `az`, `gh` and `git` (see [Prerequisites](#prerequisites)). Phase 1 (naming your subscriptions) is manual, and the details for every phase are below.
+
+Requires PowerShell 7.4+, `az`, `gh` and `git`. Create five subscriptions named `*-connectivity`, `*-identity`, `*-operations`, `*-corp` and `*-online` first. The full runbook is [below](#runbook).
 
 ```powershell
-pwsh ./scripts/bootstrap/Sync-Subscriptions.ps1            # Phase 2: discover subscriptions, publish secrets
-pwsh ./scripts/bootstrap/Initialize-TenantOidc.ps1         # Phase 3: tenant deployer identity + OIDC
-gh workflow run deploy-foundation.yml                      # Phase 4: management groups, policy, associations
-pwsh ./scripts/bootstrap/Initialize-SubscriptionOidc.ps1   # Phase 5: per-subscription deployer identities
+Copy-Item environments/prod/main.bicepparam.example environments/prod/main.bicepparam
+pwsh ./scripts/bootstrap/Sync-Subscriptions.ps1 -WhatIf   # preview, writes nothing
+pwsh ./scripts/bootstrap/Sync-Subscriptions.ps1           # Phase 2: discover subscriptions, publish secrets
+pwsh ./scripts/bootstrap/Initialize-TenantOidc.ps1        # Phase 3: tenant deployer identity + OIDC
+gh workflow run deploy-foundation.yml -f mode=what-if     # Phase 4: preview
+gh workflow run deploy-foundation.yml -f mode=deploy      # Phase 4: apply
+pwsh ./scripts/bootstrap/Initialize-SubscriptionOidc.ps1  # Phase 5: per-subscription deployer identities
 ```
-
-## Security Model
-
-* **No committed IDs:** Live subscription IDs exist only in the gitignored local `main.bicepparam` and in GitHub Actions secrets, both populated by `Sync-Subscriptions.ps1`. Tenant, client and root management group IDs are published as Actions secrets (and bootstrap scripts print target subscription, client and principal IDs for audit).
-* **Log hygiene:** `Sync-Subscriptions.ps1` logs workload and subscription *names*, not IDs. `Initialize-TenantOidc.ps1` and `Initialize-SubscriptionOidc.ps1` print the target subscription ID and the identity's client and principal IDs so the result can be audited.
-* **No long-lived credentials:** The deployer authenticates with GitHub OIDC federation. There are no client secrets to rotate or leak.
-* **Least privilege, with a documented trade-off:** The tenant deployer holds Contributor, Resource Policy Contributor and User Access Administrator at `/`. This is highly privileged by operational necessity, because it creates management groups, policies and RBAC at tenant scope. The blast radius is limited by the OIDC trust, which is scoped to a single repository and the `main` branch. Hardening options for production:
-  * replace Contributor with a custom role limited to the required actions,
-  * add a condition to User Access Administrator so it can only assign approved roles,
-  * split the identity into separate management-group and subscription deployers (Phase 5 provides the subscription deployers; narrowing the tenant deployer is the remaining step).
-
-Because the trust is scoped to `main`, protect that branch (required reviews, no force-push) and keep `deploy-foundation.yml` on manual dispatch.
 
 ## Deployment phases
 
-| Phase | Purpose | Entry point |
-| :--- | :--- | :--- |
-| 1 | Pre-provision subscriptions named by convention | Manual |
-| 2 | Subscription discovery, parameter sync, CI secrets | `Sync-Subscriptions.ps1` |
-| 3 | Tenant deployer identity and OIDC trust | `Initialize-TenantOidc.ps1` |
-| 4 | Management groups, subscription associations, policy-as-code | `deploy-foundation.yml` |
-| 5 | Per-subscription deployer identities and OIDC trust | `Initialize-SubscriptionOidc.ps1` |
-| 6 | Connectivity hub (planned) | `deploy-resources.yml` |
+| Phase | Purpose | Entry point | Status |
+| :--- | :--- | :--- | :--- |
+| 1 | Pre-provision subscriptions named by convention | Manual | Done |
+| 2 | Subscription discovery, parameter sync, CI secrets | `Sync-Subscriptions.ps1` | Done |
+| 3 | Tenant deployer identity and OIDC trust | `Initialize-TenantOidc.ps1` | Done |
+| 4 | Management groups, subscription associations, policy as code | `deploy-foundation.yml` | Done |
+| 5 | Per-subscription deployer identities and OIDC trust | `Initialize-SubscriptionOidc.ps1` | Done |
+| 6 | Connectivity hub and workload resource groups | `deploy-resources.yml` | Planned |
 
 ## Prerequisites
 
-Minimum tool versions are defined in `scripts/LandingZone.Bootstrap/prerequisites.psd1`.
-
-### Permissions
-
-* **Tenant root scope (`/`):** User Access Administrator or Owner at `/`. The bootstrap assigns roles at this scope, and its preflight checks for the permission before writing anything. A Global Administrator must first enable *Elevate access to manage all Azure subscriptions and management groups* in Microsoft Entra ID.
-* **Target subscriptions:** Visible to the signed-in account so discovery can find them with `az account list` (Phase 2 needs only Reader). Phases 3 and 5 also create resource groups and identities and register resource providers, so the account needs Contributor or Owner on each target subscription, in addition to the role-assignment rights above.
-* **GitHub repository:** Admin access, required to write Actions secrets.
-
-### Required tools and versions
-
-The table below is generated from `prerequisites.psd1`. Do not edit it by hand; regenerate it with:
-
-```powershell
-pwsh ./scripts/tools/Update-ReadmePrerequisites.ps1
-```
+Minimum versions are defined in `scripts/LandingZone.Bootstrap/prerequisites.psd1`. Required permissions are listed in the [runbook](#permissions).
 
 <!-- prerequisites:start -->
 | Tool | Minimum version | Install |
@@ -106,21 +120,19 @@ pwsh ./scripts/tools/Update-ReadmePrerequisites.ps1
 | git | 2.40 | `winget install --id Git.Git` |
 <!-- prerequisites:end -->
 
-The Bicep CLI is installed automatically by `az bicep` on first use. The scripts need it to read `main.bicepparam`.
-
-Each script documents its own parameters: `Get-Help ./scripts/bootstrap/<script>.ps1 -Full`. All default to the `prod` environment and the `origin` remote.
+The table is generated: run `pwsh ./scripts/tools/Update-ReadmePrerequisites.ps1` instead of editing it by hand. The Bicep CLI is installed by `az bicep` on first use.
 
 ## Repository Structure
 ```text
 azure-landing-zone-bicep/
 │
 ├── .github/
+│   ├── actions/setup-bicep/             <-- Composite action: Bicep install with retry
 │   ├── dependabot.yml                   <-- Weekly GitHub Actions version updates
 │   └── workflows/
 │       ├── deploy-foundation.yml        <-- MGs, policies & governance, subscription association
 │       └── deploy-resources.yml         <-- (planned) Subscription-scoped VNets, NSGs and workload RGs
 ├── environments/
-│   ├── dev/                             <-- (planned)
 │   └── prod/
 │       ├── main.bicep                   <-- Tenant orchestration entry point
 │       ├── main.bicepparam.example      <-- Committed parameter template (edit this)
@@ -134,27 +146,40 @@ azure-landing-zone-bicep/
 │       └── online.bicep                 <-- Subscription scope: public web & edge routing
 ├── modules/
 │   ├── management-groups/
-│   │   ├── managementGroup.bicep
-│   │   └── subscriptionAssociation.bicep
 │   ├── governance/
 │   ├── resource-groups/
 │   ├── networking/                     <-- (planned)
-│   ├── key-vault/                      <-- (planned)
-│   └── landing-zones/
+│   └── key-vault/                      <-- (planned)
 ├── scripts/
 │   ├── bootstrap/
 │   │   ├── Sync-Subscriptions.ps1       <-- Phase 2: discover subscriptions, fill main.bicepparam, publish *_SUB_ID secrets
 │   │   ├── Initialize-TenantOidc.ps1    <-- Phase 3: tenant-level deployer identity and OIDC trust
-│   │   └── Initialize-SubscriptionOidc.ps1 <-- Phase 5: per-subscription deployer identities and OIDC trust
+│   │   └── Initialize-SubscriptionOidc.ps1   <-- Phase 5: per-subscription deployer identities and OIDC trust
 │   ├── LandingZone.Bootstrap/           <-- Shared module used by all entry points
+│   │   ├── LandingZone.Bootstrap.psd1/.psm1  <-- Module manifest and loader
 │   │   ├── prerequisites.psd1           <-- Minimum tool versions (single source)
 │   │   ├── Private/                     <-- Internal helpers (not exported)
 │   │   └── Public/                      <-- Preflight checks, naming, identity, RBAC, GitHub secrets
-│   └── tools/
-│       └── Update-ReadmePrerequisites.ps1
+│   └── tools/Update-ReadmePrerequisites.ps1
 ├── .gitignore
 └── README.md
 ```
+
+## Runbook
+
+Operator reference for each phase. Run every command from the repository root.
+
+### Permissions
+
+| Phase | Needs |
+| :--- | :--- |
+| 2 | Reader on the target subscriptions (so `az account list` can find them) |
+| 3 | User Access Administrator or Owner at tenant root `/`, plus Contributor or Owner on the bootstrap (operations) subscription |
+| 4 | Write access to the GitHub repository to dispatch the workflow. The deployer identity from Phase 3 does the Azure work |
+| 5 | Owner on each target subscription (or Contributor plus User Access Administrator). Tenant-root rights are not needed |
+| All | Admin on the GitHub repository, to write Actions secrets |
+
+To get rights at `/`, a Global Administrator must first enable *Elevate access to manage all Azure subscriptions and management groups* in Microsoft Entra ID, then you run `az logout` and `az login`.
 
 ### Phase 1: Pre-provisioning and subscription naming
 Create the target subscriptions before running any script. Phase 2 discovers them by name, so the naming convention is the contract.
@@ -170,7 +195,7 @@ Create the target subscriptions before running any script. Phase 2 discovers the
 | **Operations** | `operations` | `sub-contoso-us-operations` |
 
 * **Naming rule:** Each subscription name must end in `-<keyword>` (for example `-corp`), and exactly one *enabled* subscription per keyword may exist in the signed-in tenant.
-* **Parameter file rule:** Edit your topology and metadata in the committed `environments/prod/main.bicepparam.example`. Create your local working copy with `copy main.bicepparam.example main.bicepparam`. Phase 2 fills in the live subscription IDs, so never type them by hand. The local file contains production IDs, is gitignored, and must never be committed.
+* **Parameter file rule:** Edit your topology and metadata in the committed `environments/prod/main.bicepparam.example`. Create your local working copy with `Copy-Item environments/prod/main.bicepparam.example environments/prod/main.bicepparam`. Phase 2 fills in the live subscription IDs, so never type them by hand. The local file contains production IDs, is gitignored, and must never be committed.
 * **Placeholders must be distinct per workload** (for example `11111111-…` for one workload and `22222222-…` for the next). Phase 2 replaces IDs by text, so two workloads sharing one placeholder would overwrite each other.
 
 ### Phase 2: Subscription discovery, parameter sync and CI secrets
@@ -191,6 +216,7 @@ What `Sync-Subscriptions.ps1` does (Azure → `main.bicepparam` → GitHub secre
 * **Converges idempotently:** When nothing needs to change, it writes nothing and reports `[IDEMPOTENT]`.
 * **Validates before publishing:** Every ID must be a real GUID and not a placeholder before any secret is written.
 * **Publishes CI secrets:** Upserts one `<WORKLOAD>_SUB_ID` secret per workload (for example `CORP_SUB_ID`) and prints a workload-to-secret summary. `deploy-foundation.yml` substitutes these into the parameter template at run time.
+* **Log hygiene:** logs workload and subscription *names*, not IDs.
 
 Full behavior and parameters: `Get-Help ./scripts/bootstrap/Sync-Subscriptions.ps1 -Full`
 
@@ -203,7 +229,7 @@ Full behavior and parameters: `Get-Help ./scripts/bootstrap/Sync-Subscriptions.p
 
 **Prerequisites:** Phase 2 has completed, so `main.bicepparam` holds real subscription IDs. The bootstrap refuses to run against placeholders, and the OIDC subject must match your repository and branch (see `Get-OidcSubject` in `scripts/LandingZone.Bootstrap/Private/Get-OidcSubject.ps1`).
 
-Mark your primary deployment region with `isPrimary: true` in the `regionalConfig` of your parameter file. Pair the secondary region with its Azure-paired region for high availability and disaster recovery readiness.
+Mark your primary region with `isPrimary: true` in `regionalConfig`, and pair the secondary region with its Azure-paired region.
 
 Run from the repository root:
 ```powershell
@@ -213,8 +239,8 @@ pwsh ./scripts/bootstrap/Initialize-TenantOidc.ps1
 What `Initialize-TenantOidc.ps1` does:
 
 * **Reads configuration once, through the Bicep compiler:** `Get-BicepParamConfig` compiles `main.bicepparam` with `az bicep build-params` and reads the resulting JSON, so there is no regex parsing. It derives the primary location, region code and subscription map. The bootstrap workload and its tags come from `workloads.json`.
-* **Gates in stages:** Environment and access first (tooling, parameter file, `workloads.json` against its schema, Azure and GitHub sessions, repository admin). Then configuration (the bootstrap subscription ID is a real GUID). Then the Azure target (subscription enabled and in your tenant, User Access Administrator at `/`). `Microsoft.Resources` and `Microsoft.ManagedIdentity` are registered if needed.
-* **Resolves context:** Tenant ID from your Azure session. Owner and repository from the flags, or from the `origin` remote if omitted.
+* **Gates in stages:** Environment and access first (tooling, parameter file, `workloads.json` against its schema, Azure and GitHub sessions, repository admin). Then configuration (the bootstrap subscription ID is a real GUID). Then the Azure target (subscription enabled and in your tenant, a role at `/` that can write role assignments).
+* **Registers providers:** `Microsoft.Resources` and `Microsoft.ManagedIdentity` are registered in the bootstrap subscription only if needed.
 * **Provisions idempotently** (get-or-create, no duplicates on re-run):
   1. Resource group `rg-<domain>-tenant-<env>-<region>-01` in the bootstrap subscription, with tags from `workloads.json`.
   2. User-assigned managed identity `id-<domain>-tenant-<env>-<region>-01`.
@@ -235,43 +261,43 @@ What `Initialize-TenantOidc.ps1` does:
 
 * **Customizing the topology:** Edit the management group hierarchy and subscription associations in the committed `environments/prod/main.bicepparam.example`, and mirror the change in your local `main.bicepparam` so the bootstrap scripts see the same topology.
 * **Default deployment:** With no changes, the pipeline deploys the topology documented above.
-* **Execution:** The parameter template feeds `main.bicep`, which drives data-driven creation of management groups, governance policies and subscription associations. The `*_SUB_ID` secrets from Phase 2 supply the live IDs at run time.
+* **Execution:** the workflow copies the template, substitutes the `*_SUB_ID` secrets from Phase 2, resolves the deployment location from the primary region, authenticates with OIDC, and runs a tenant-scope deployment of `main.bicep`.
+* **Pull requests** run only the Bicep build and lint gate. The deploy job is skipped, because the OIDC credential trusts `main` only.
 * **Trigger, watch and dump failures:**
 
+The workflow defaults to `what-if` and changes nothing until dispatched with `mode=deploy`.
+
 ```powershell
-gh workflow run deploy-foundation.yml; gh run watch --exit-status; gh run view $(gh run list --limit 1 --json databaseId --jq '.[0].databaseId') --log-failed
+gh workflow run deploy-foundation.yml -f mode=what-if    # preview
+gh workflow run deploy-foundation.yml -f mode=deploy     # apply
+
+Start-Sleep -Seconds 5                                    # let the new run register
+$id = gh run list --workflow deploy-foundation.yml --limit 1 --json databaseId --jq '.[0].databaseId'
+gh run watch $id --exit-status
+gh run view $id --log-failed                              # only if it failed
 ```
 
-**Post-Deployment Verification:** To verify that management groups, policy assignments and subscription associations have converged:
+Run logs on a public repository are public. Secret values are masked, but other identifiers in command output are not, so the deploy step prints only the provisioning state.
 
-* **Management group hierarchy:**
-
+**Post-Deployment Verification:** 
 ```powershell
+# Management group hierarchy
 az account management-group list --query "[].{Name:name, DisplayName:displayName, ID:id}" --output table
-```
 
-* **Tenant subscription inventory:**
-
-```powershell
+# Subscription inventory
 az account list --all --output table
-```
 
-* **Inherited policy assignments at the organization root:**
-
-```powershell
+# Policy assignments at the organization root
 az policy assignment list --scope "/providers/Microsoft.Management/managementGroups/mg-contoso-us" --query "[].{Name:name, DisplayName:displayName, Enforcement:enforcementMode}" --output table
-```
 
-* **Scoped policy exemption:**
-
-```powershell
+# Scoped policy exemption
 $connectivitySub = az account list --query "[?ends_with(name, '-connectivity')].id | [0]" --output tsv
 az policy exemption show --name "exemption-allow-hub-public-ips" --scope "/subscriptions/$connectivitySub" --output table
 ```
 
 ### Phase 5: Subscription deployer identities
 
-**Prerequisites:** Phase 2 has completed (real subscription IDs; placeholders are refused) and Phase 4 has completed, so the management groups, subscription associations and policy assignments exist. The resource groups created here are then evaluated by the root policies (allowed locations and required tags). The tags come from `workloads.json`, so they satisfy the tagging guardrails.
+**Prerequisites:** Phase 2 has completed (real subscription IDs; placeholders are refused) and Phase 4 was applied with `mode=deploy`, so the management groups, subscription associations and policy assignments exist. The resource groups created here are then evaluated by the root policies (allowed locations and required tags). The tags come from `workloads.json`, so they satisfy the tagging guardrails.
 
 ```powershell
 pwsh ./scripts/bootstrap/Initialize-SubscriptionOidc.ps1
@@ -285,7 +311,12 @@ Per workload, idempotently:
 * **Assigns least privilege:** Contributor on that subscription only, not at `/`.
 * **Publishes CI secrets:** one `<WORKLOAD>_CLIENT_ID` secret per workload (for example `CORP_CLIENT_ID`).
 
-This phase deploys no workload resources.
+The operations subscription ends up with two identities: the tenant deployer from Phase 3 (`rg-ops-tenant-...`) and its own subscription deployer (`rg-ops-deploy-...`).
 
-## Phase 6: Core Infrastructure and connectivity (planned)
-** `deploy-resources.yml` will deploy the connectivity hub (`connectivity.bicep`, `modules/networking/`) using the Phase 5 identities.
+This phase deploys no workload resources. Nothing consumes the `*_CLIENT_ID` secrets yet; `deploy-resources.yml` (Phase 6) will.
+
+### Phase 6: Core infrastructure and connectivity (planned)
+
+`deploy-resources.yml` will deploy the subscription-scope resource groups and the connectivity hub using the Phase 5 identities. `connectivity.bicep` and `operations.bicep` already declare the hub and logs resource groups, but no workflow deploys them yet. `modules/networking/` does not exist yet.
+
+Built by Osvaldo Ceballos.
