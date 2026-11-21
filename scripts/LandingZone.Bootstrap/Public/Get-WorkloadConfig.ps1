@@ -18,7 +18,7 @@ function Get-WorkloadConfig {
     $entry    = $registry.workloads[$Workload]   # hashtable index: null instead of a StrictMode error
     if (-not $entry) { throw "Get-WorkloadConfig: workload '$Workload' is not defined in '$Path'." }
 
-    $tags = [ordered]@{ Owner = $entry.team.name; Environment = $Environment }
+    $tags = [ordered]@{ Owner = $entry.team.name; Environment = $Environment; Domain = $Workload }
     foreach ($key in $entry.tags.Keys) { $tags[$key] = $entry.tags[$key] }
 
     [pscustomobject]@{ Workload = $Workload; Domain = $entry.domain; Tags = $tags }
