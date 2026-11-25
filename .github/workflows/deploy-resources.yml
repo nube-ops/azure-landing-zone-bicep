@@ -1,0 +1,94 @@
+name: Azure Landing Zone Resources
+
+# Scope: subscription-level resources (resource groups, then hub networking), defined in
+# environments/<env>/<workload>.bicep. Tenant-level foundation lives in deploy-foundation.yml.
+# Each workload authenticates with its own subscription-scoped deployer identity (Phase 5).
+# Bicep build and lint for every template runs in deploy-foundation.yml on pull requests.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: what-if previews changes; deploy applies them.
+        type: choice
+        options: [what-if, deploy]
+        default: what-if
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: ${{ matrix.workload.name }} ${{ inputs.mode }} (${{ matrix.environment }})
+    runs-on: ubuntu-latest
+
+    # One run per subscription at a time; different subscriptions can run in parallel.
+    concurrency:
+      group: deploy-resources-${{ matrix.environment }}-${{ matrix.workload.name }}
+      cancel-in-progress: false
+
+    # Add a workload here once its <name>.bicep declares resources (corp, identity and online are still placeholders).
+    # `prefix` is the secret prefix written by Sync-Subscriptions.ps1 and Initialize-SubscriptionOidc.ps1.
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [prod]
+        workload:
+          - { name: connectivity, prefix: CONNECTIVITY }
+          - { name: operations, prefix: OPERATIONS }
+
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      ENV_DIR: environments/${{ matrix.environment }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - uses: ./.github/actions/setup-bicep
+
+      - name: Resolve deployment settings from main.bicepparam.example
+        id: cfg
+        run: |
+          # The scrubbed template is enough: org name and regions are not secrets (same compiler-as-parser approach).
+          az bicep build-params --file "$ENV_DIR/main.bicepparam.example" \
+            --outfile "$RUNNER_TEMP/params.json" --no-restore
+
+          LOCATION=$(jq -r '(.parameters.regionalConfig.value | map(select(.isPrimary)) | .[0].location) // ""' "$RUNNER_TEMP/params.json")
+          REGION_CODE=$(jq -r '(.parameters.regionalConfig.value | map(select(.isPrimary)) | .[0].regionCode) // ""' "$RUNNER_TEMP/params.json")
+
+          : "${LOCATION:?no regionalConfig entry with isPrimary: true in main.bicepparam.example}"
+          : "${REGION_CODE:?primary regionalConfig entry has no regionCode}"
+          echo "location=$LOCATION" >> "$GITHUB_OUTPUT"
+          echo "region_code=$REGION_CODE" >> "$GITHUB_OUTPUT"
+
+      - name: Authenticate to Azure via OIDC (${{ matrix.workload.name }} deployer)
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets[format('{0}_CLIENT_ID', matrix.workload.prefix)] }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets[format('{0}_SUB_ID', matrix.workload.prefix)] }}
+
+      - name: ${{ matrix.workload.name }} ${{ inputs.mode }}
+        env:
+          MODE: ${{ inputs.mode }}
+          WORKLOAD: ${{ matrix.workload.name }}
+          ENVIRONMENT: ${{ matrix.environment }}
+          LOCATION: ${{ steps.cfg.outputs.location }}
+          REGION_CODE: ${{ steps.cfg.outputs.region_code }}
+        run: |
+          # Same arguments for both modes: only the verb differs (DRY).
+          args=(
+            --location "$LOCATION"
+            --template-file "$ENV_DIR/$WORKLOAD.bicep"
+            --parameters environment="$ENVIRONMENT" regionCode="$REGION_CODE"
+          )
+
+          if [ "$MODE" = "deploy" ]; then
+            # Print only the state: full output includes identifiers, and public run logs are public.
+            az deployment sub create "${args[@]}" --query properties.provisioningState --output tsv
+          else
+            az deployment sub what-if "${args[@]}"
+          fi
