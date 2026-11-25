@@ -1,0 +1,24 @@
+name: Resolve deployment config
+description: Compiles a .bicepparam and outputs the primary location and region code.
+inputs:
+  param-file:
+    description: Path to a .bicepparam file
+    required: true
+outputs:
+  location:
+    value: ${{ steps.r.outputs.location }}
+  region_code:
+    value: ${{ steps.r.outputs.region_code }}
+runs:
+  using: composite
+  steps:
+    - id: r
+      shell: bash
+      env:
+        PARAM_FILE: ${{ inputs.param-file }}
+      run: |
+        az bicep build-params --file "$PARAM_FILE" --outfile "$RUNNER_TEMP/params.json" --no-restore
+        primary=$(jq -c '.parameters.regionalConfig.value | map(select(.isPrimary)) | .[0] // empty' "$RUNNER_TEMP/params.json")
+        : "${primary:?no regionalConfig entry with isPrimary: true}"
+        echo "location=$(jq -r .location <<<"$primary")" >> "$GITHUB_OUTPUT"
+        echo "region_code=$(jq -r .regionCode <<<"$primary")" >> "$GITHUB_OUTPUT"
