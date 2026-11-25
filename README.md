@@ -3,7 +3,7 @@
 
 A tenant-scope Azure landing zone built from code and deployed with **no stored credentials**. Bicep creates the management group hierarchy, policy guardrails and subscription associations. Idempotent PowerShell builds the GitHub OIDC trust that the pipeline deploys through. Aligned to the Microsoft Cloud Adoption Framework (CAF) Enterprise-Scale reference architecture.
 
-**Status:** Phases 1–5 implemented and run end to end against a live tenant. Phase 6 (workload resources) is planned.
+**Status:** Phases 1–5 implemented and run end to end against a live tenant. Phase 6 is in progress: the resource pipeline is in place and deploys the hub and logs resource groups. Hub networking is planned.
 
 ## At a glance
 
@@ -13,7 +13,7 @@ A tenant-scope Azure landing zone built from code and deployed with **no stored 
 | **Governance** | 4 custom policy definitions and initiatives (tagging, allowed locations, storage hardening, tag audit), the Microsoft cloud security benchmark, and 1 scoped exemption |
 | **Identity** | GitHub OIDC federated credentials on user-assigned managed identities. Zero client secrets |
 | **Automation** | 3 PowerShell entry points on one shared module: preflight gates, idempotent writes, retry |
-| **CI/CD** | GitHub Actions: Bicep build and lint gate on every pull request, what-if or deploy on manual dispatch only, serialized tenant-scope runs |
+| **CI/CD** | GitHub Actions: Bicep build and lint gate on every pull request, what-if or deploy on manual dispatch only. Tenant-scope runs are serialized, and subscription-scope runs use one per-subscription deployer identity each |
 
 ## What this demonstrates
 
@@ -23,7 +23,7 @@ A tenant-scope Azure landing zone built from code and deployed with **no stored 
 | Azure Policy as code (initiatives, assignments, exemptions) | [`modules/governance/`](modules/governance) |
 | Workload identity federation and RBAC | [`Initialize-TenantOidc.ps1`](scripts/bootstrap/Initialize-TenantOidc.ps1), [`Initialize-SubscriptionOidc.ps1`](scripts/bootstrap/Initialize-SubscriptionOidc.ps1) |
 | Production-style PowerShell (preflight, `-WhatIf`, retry, drift-only writes) | [`scripts/LandingZone.Bootstrap/`](scripts/LandingZone.Bootstrap) |
-| CI/CD with what-if preview and a lint gate | [`deploy-foundation.yml`](.github/workflows/deploy-foundation.yml) |
+| CI/CD with what-if preview, a lint gate and a per-subscription identity matrix | [`deploy-foundation.yml`](.github/workflows/deploy-foundation.yml), [`deploy-resources.yml`](.github/workflows/deploy-resources.yml) |
 | Naming and tagging standards that feed cost allocation | [`workloads.json`](environments/prod/workloads.json), [`naming.bicep`](modules/resource-groups/naming.bicep) |
 
 ## Architecture Topology
@@ -34,7 +34,7 @@ Tenant Root Group
 │   │  ├─ mg-contoso-us-connectivity
 │   │  │  └─ sub-contoso-us-connectivity (Subscription)
 │   │  │     ├─ rg-net-deploy-prod-cus-01   # Deployer UMI + OIDC (this subscription only)
-│   │  │     └─ rg-net-hub-prod-cus-01      # (planned) Hub VNet, Azure Firewall, VPN gateways
+│   │  │     └─ rg-net-hub-prod-cus-01      # Hub VNet, Azure Firewall, VPN gateways
 │   │  ├─ mg-contoso-us-identity
 │   │  │  └─ sub-contoso-us-identity (Subscription)
 │   │  │     ├─ rg-id-deploy-prod-cus-01    # Deployer UMI + OIDC (this subscription only)
@@ -43,7 +43,7 @@ Tenant Root Group
 │   │     └─ sub-contoso-us-operations (Subscription)
 │   │        ├─ rg-ops-tenant-prod-cus-01   # Tenant-root deployer UMI (restricted access)
 │   │        ├─ rg-ops-deploy-prod-cus-01   # Deployer UMI + OIDC (this subscription only)
-│   │        └─ rg-ops-logs-prod-cus-01     # (planned) Log Analytics, automation, dashboards
+│   │        └─ rg-ops-logs-prod-cus-01     # Log Analytics, automation, dashboards
 │   └─ mg-contoso-us-landingzones
 │      ├─ mg-contoso-us-corp
 │      │  └─ sub-contoso-us-corp (Subscription)
@@ -105,7 +105,7 @@ pwsh ./scripts/bootstrap/Initialize-SubscriptionOidc.ps1  # Phase 5: per-subscri
 | 3 | Tenant deployer identity and OIDC trust | `Initialize-TenantOidc.ps1` | Done |
 | 4 | Management groups, subscription associations, policy as code | `deploy-foundation.yml` | Done |
 | 5 | Per-subscription deployer identities and OIDC trust | `Initialize-SubscriptionOidc.ps1` | Done |
-| 6 | Connectivity hub and workload resource groups | `deploy-resources.yml` | Planned |
+| 6 | Hub and logs resource groups, then hub networking and workload resource groups | `deploy-resources.yml` | In progress |
 
 ## Prerequisites
 
@@ -131,7 +131,7 @@ azure-landing-zone-bicep/
 │   ├── dependabot.yml                   <-- Weekly GitHub Actions version updates
 │   └── workflows/
 │       ├── deploy-foundation.yml        <-- MGs, policies & governance, subscription association
-│       └── deploy-resources.yml         <-- (planned) Subscription-scoped VNets, NSGs and workload RGs
+│       └── deploy-resources.yml         <-- Subscription-scoped VNets, NSGs and workload RGs
 ├── environments/
 │   └── prod/
 │       ├── main.bicep                   <-- Tenant orchestration entry point
@@ -178,6 +178,7 @@ Operator reference for each phase. Run every command from the repository root.
 | 4 | Write access to the GitHub repository to dispatch the workflow. The deployer identity from Phase 3 does the Azure work |
 | 5 | Owner on each target subscription (or Contributor plus User Access Administrator). Tenant-root rights are not needed |
 | All | Admin on the GitHub repository, to write Actions secrets |
+| 6 | Write access to the GitHub repository to dispatch the workflow, from `main`. The Phase 5 deployer identities do the Azure work |
 
 To get rights at `/`, a Global Administrator must first enable *Elevate access to manage all Azure subscriptions and management groups* in Microsoft Entra ID, then you run `az logout` and `az login`.
 
@@ -313,10 +314,24 @@ Per workload, idempotently:
 
 The operations subscription ends up with two identities: the tenant deployer from Phase 3 (`rg-ops-tenant-...`) and its own subscription deployer (`rg-ops-deploy-...`).
 
-This phase deploys no workload resources. Nothing consumes the `*_CLIENT_ID` secrets yet; `deploy-resources.yml` (Phase 6) will.
+This phase deploys no workload resources. The `*_CLIENT_ID` secrets are consumed by `deploy-resources.yml` (Phase 6).
 
-### Phase 6: Core infrastructure and connectivity (planned)
+### Phase 6: Subscription resources (in progress)
 
-`deploy-resources.yml` will deploy the subscription-scope resource groups and the connectivity hub using the Phase 5 identities. `connectivity.bicep` and `operations.bicep` already declare the hub and logs resource groups, but no workflow deploys them yet. `modules/networking/` does not exist yet.
+**Prerequisites:** Phases 4 and 5 are done, so the policies exist and each subscription has its deployer identity and `<WORKLOAD>_CLIENT_ID` / `<WORKLOAD>_SUB_ID` secrets. The workflow must be dispatched from `main`, because the OIDC credential trusts that branch only.
+
+```powershell
+gh workflow run deploy-resources.yml -f mode=what-if    # preview
+gh workflow run deploy-resources.yml -f mode=deploy     # apply
+```
+
+* **One job per workload:** a matrix signs in with that workload's own deployer identity (Contributor on its subscription only) and deploys `environments/<env>/<workload>.bicep` at subscription scope. Runs for different subscriptions can run in parallel, and runs for the same subscription never overlap.
+* **Current scope:** `connectivity` and `operations` (the hub and logs resource groups). `corp`, `identity` and `online` are placeholders with no resources yet. Add each to the matrix when it gets some.
+* **Parameters:** primary location and region code are read from `main.bicepparam.example` with the Bicep compiler. The environment comes from the matrix.
+* **Verify:**
+  ```powershell
+  foreach ($sub in (az account list --query "[].id" -o tsv)) { az group list --subscription $sub --query "[?contains(name,'-hub-') || contains(name,'-logs-')].name" -o tsv }
+  ```
+* **Planned:** `modules/networking/` (hub VNet and subnets) comes next. Firewall, gateways and spoke peering are deferred until a spoke needs them.
 
 Built by Osvaldo Ceballos.
