@@ -4,7 +4,6 @@ import { rgName } from '../../modules/resource-groups/naming.bicep'
 import { resolveTags } from '../../modules/resource-groups/tags.bicep'
 
 param location string = deployment().location
-param orgName string
 param environment string
 param regionCode string
 
