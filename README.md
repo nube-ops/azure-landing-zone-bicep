@@ -127,7 +127,9 @@ The table is generated: run `pwsh ./scripts/tools/Update-ReadmePrerequisites.ps1
 azure-landing-zone-bicep/
 │
 ├── .github/
-│   ├── actions/setup-bicep/             <-- Composite action: Bicep install with retry
+│   └── actions/                         
+│       ├── setup-bicep                  <-- Composite action: Bicep install with retry
+│       └── resolve-config               <-- Composite action: primary location and region code from main.bicepparam
 │   ├── dependabot.yml                   <-- Weekly GitHub Actions version updates
 │   └── workflows/
 │       ├── deploy-foundation.yml        <-- MGs, policies & governance, subscription association
@@ -327,7 +329,7 @@ gh workflow run deploy-resources.yml -f mode=deploy     # apply
 
 * **One job per workload:** a matrix signs in with that workload's own deployer identity (Contributor on its subscription only) and deploys `environments/<env>/<workload>.bicep` at subscription scope. Runs for different subscriptions can run in parallel, and runs for the same subscription never overlap.
 * **Current scope:** `connectivity` and `operations` (the hub and logs resource groups). `corp`, `identity` and `online` are placeholders with no resources yet. Add each to the matrix when it gets some.
-* **Parameters:** primary location and region code are read from `main.bicepparam.example` with the Bicep compiler. The environment comes from the matrix.
+* **Parameters:** the workflow copies `main.bicepparam.example` to `main.bicepparam` on the runner, and the shared `resolve-config` action reads the primary location and region code with the Bicep compiler. The environment comes from the matrix.
 * **Verify:**
   ```powershell
   foreach ($sub in (az account list --query "[].id" -o tsv)) { az group list --subscription $sub --query "[?contains(name,'-hub-') || contains(name,'-logs-')].name" -o tsv }
