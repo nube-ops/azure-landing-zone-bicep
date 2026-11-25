@@ -49,20 +49,14 @@ jobs:
 
       - uses: ./.github/actions/setup-bicep
 
-      - name: Resolve deployment settings from main.bicepparam.example
+      - name: Generate parameter file from template
+        run: cp "$ENV_DIR/main.bicepparam.example" "$ENV_DIR/main.bicepparam"
+
+      - name: Resolve deployment settings
         id: cfg
-        run: |
-          # The scrubbed template is enough: org name and regions are not secrets (same compiler-as-parser approach).
-          az bicep build-params --file "$ENV_DIR/main.bicepparam.example" \
-            --outfile "$RUNNER_TEMP/params.json" --no-restore
-
-          LOCATION=$(jq -r '(.parameters.regionalConfig.value | map(select(.isPrimary)) | .[0].location) // ""' "$RUNNER_TEMP/params.json")
-          REGION_CODE=$(jq -r '(.parameters.regionalConfig.value | map(select(.isPrimary)) | .[0].regionCode) // ""' "$RUNNER_TEMP/params.json")
-
-          : "${LOCATION:?no regionalConfig entry with isPrimary: true in main.bicepparam.example}"
-          : "${REGION_CODE:?primary regionalConfig entry has no regionCode}"
-          echo "location=$LOCATION" >> "$GITHUB_OUTPUT"
-          echo "region_code=$REGION_CODE" >> "$GITHUB_OUTPUT"
+        uses: ./.github/actions/resolve-config
+        with:
+          param-file: ${{ env.ENV_DIR }}/main.bicepparam
 
       - name: Authenticate to Azure via OIDC (${{ matrix.workload.name }} deployer)
         uses: azure/login@v3

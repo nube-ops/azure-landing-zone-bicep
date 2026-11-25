@@ -95,19 +95,11 @@ jobs:
 
       - uses: ./.github/actions/setup-bicep
 
-      - name: Resolve deployment location from main.bicepparam
+      - name: Resolve deployment settings
         id: cfg
-        run: |
-          # main.bicepparam is the single source of truth (same approach as Get-BicepParamConfig).
-          az bicep build-params --file "$ENV_DIR/main.bicepparam" \
-            --outfile "$RUNNER_TEMP/params.json" --no-restore
-
-          LOCATION=$(jq -r '
-            (.parameters.regionalConfig.value | map(select(.isPrimary)) | .[0].location) // ""
-          ' "$RUNNER_TEMP/params.json")
-
-          : "${LOCATION:?no regionalConfig entry with isPrimary: true in main.bicepparam}"
-          echo "location=$LOCATION" >> "$GITHUB_OUTPUT"
+        uses: ./.github/actions/resolve-config
+        with:
+          param-file: ${{ env.ENV_DIR }}/main.bicepparam
 
       - name: Authenticate to Azure via OIDC
         uses: azure/login@v3
