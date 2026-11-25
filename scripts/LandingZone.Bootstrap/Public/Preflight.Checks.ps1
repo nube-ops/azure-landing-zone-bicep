@@ -222,7 +222,7 @@ function Test-GitHubRepoAdmin {
 }
 
 # ---------------------------------------------------------------- Azure
-#   Test-AzureSession, Test-TargetSubscription, Test-ProviderRegistered, Test-CanWriteRoleAssignments
+#   Test-AzureSession, Test-TargetSubscription, Test-ProviderRegistered, Test-CanWriteRoleAssignment 
 function Test-AzureSession {
     <#
     .SYNOPSIS
