@@ -111,7 +111,7 @@ param policyExemptions = [
   {
     name: 'exemption-allow-hub-public-ips'
     displayName: 'Allow Public IPs for Connectivity Hub Firewall'
-    description: 'Exempts the connectivity subscription from the global public IP restriction to permit Azure Firewall deployment.'
+    description: 'Exempts the connectivity subscription from the global public IP restriction to permit a future hub appliance (Azure Firewall or NVA).'
     exemptionCategory: 'Mitigated'
     subscriptionId: '33333333-3333-3333-3333-333333333333'
     targetSlug: 'stg-guard'
