@@ -90,14 +90,19 @@ module level2ManagementGroups '../../modules/management-groups/managementGroup.b
 // A. Built-in Security Baseline Layer
 // ==========================================
 
-module securityBenchmarkAssignment '../../modules/governance/cloud-security-benchmark.bicep' = {
+module securityBenchmarkAssignment '../../modules/governance/policy-assignment.bicep' = {
   name: 'deploy-security-benchmark-assignment'
   scope: managementGroup(rootManagementGroupName)
   params: {
+    policyNameSlug: 'mcsb'
+    policyDefinitionId: '/providers/Microsoft.Authorization/policySetDefinitions/1f3afdf9-d0c9-4c3d-847f-89da613e70a8'
+    policyDisplayName: 'Microsoft cloud security benchmark'
+    policyDescription: 'Built-in security benchmark assigned at the root management group.'
     enforcementMode: securityBenchmarkEnforcementMode
   }
   dependsOn: [level2ManagementGroups]
 }
+
 
 
 // B. Custom Policy Set Definitions (Initiative Layer)
