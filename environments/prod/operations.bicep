@@ -1,6 +1,6 @@
 targetScope = 'subscription'
 
-import { rgName } from '../../modules/resource-groups/naming.bicep'   // adjust to your path
+import { resourceName } from '../../modules/naming.bicep'
 import { resolveTags } from '../../modules/resource-groups/tags.bicep'
 
 param environment string
@@ -14,7 +14,7 @@ var workloads = loadJsonContent('workloads.json').workloads
 module logsRg '../../modules/resource-groups/resourceGroup.bicep' = {
   name: 'deploy-ops-logs-rg'
   params: {
-    resourceGroupName: rgName('ops', 'logs', environment, regionCode, 1)
+    resourceGroupName: resourceName('rg', 'ops', 'logs', environment, regionCode, 1)
     location: location
     tags: resolveTags(workloads, 'operations', environment)
   }
