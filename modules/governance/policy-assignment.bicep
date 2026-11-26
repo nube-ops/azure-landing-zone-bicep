@@ -18,8 +18,12 @@ param scopeTypeFlag string = 'mg'
 @description('Parameter values for the policy assignment rule evaluation')
 param policyParameters object = {}
 
-@description('Enforcement effect or mode for the policy assignment')
-param enforcementEffect string = 'Deny'
+@description('Policy assignment enforcement mode')
+@allowed([
+  'Default'
+  'DoNotEnforce'
+])
+param enforcementMode string = 'Default'
 
 // Defensive Engineering: Guarantee 10-char max slug prefix so the 13-char uniqueString hash is never truncated
 var safeSlug = take(policyNameSlug, 10)
@@ -38,7 +42,7 @@ resource policyAssignment 'Microsoft.Authorization/policyAssignments@2022-06-01'
     description: policyDescription
     policyDefinitionId: policyDefinitionId
     parameters: !empty(policyParameters) ? policyParameters : null
-    enforcementMode: enforcementEffect == 'Deny' ? 'Default' : 'DoNotEnforce'
+    enforcementMode: enforcementMode
   }
 }
 
