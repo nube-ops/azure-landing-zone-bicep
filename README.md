@@ -3,7 +3,7 @@
 
 A tenant-scope Azure landing zone built from code and deployed with **no stored credentials**. Bicep creates the management group hierarchy, policy guardrails and subscription associations. Idempotent PowerShell builds the GitHub OIDC trust that the pipeline deploys through. Aligned to the Microsoft Cloud Adoption Framework (CAF) Enterprise-Scale reference architecture.
 
-**Status:** Phases 1–5 implemented and run end to end against a live tenant. Phase 6 is in progress: the resource pipeline is in place and deploys the hub and logs resource groups. Hub networking is planned.
+**Status:** Phases 1–5 implemented and run end to end against a live tenant. Phase 6 is in progress: the resource pipeline is in place and deploys the hub and logs resource groups. The hub VNet is deployed. Spokes, peering and user-defined routes are planned. Firewall and gateways are out of scope (lab cost).
 
 ## At a glance
 
@@ -24,7 +24,7 @@ A tenant-scope Azure landing zone built from code and deployed with **no stored 
 | Workload identity federation and RBAC | [`Initialize-TenantOidc.ps1`](scripts/bootstrap/Initialize-TenantOidc.ps1), [`Initialize-SubscriptionOidc.ps1`](scripts/bootstrap/Initialize-SubscriptionOidc.ps1) |
 | Production-style PowerShell (preflight, `-WhatIf`, retry, drift-only writes) | [`scripts/LandingZone.Bootstrap/`](scripts/LandingZone.Bootstrap) |
 | CI/CD with what-if preview, a lint gate and a per-subscription identity matrix | [`deploy-foundation.yml`](.github/workflows/deploy-foundation.yml), [`deploy-resources.yml`](.github/workflows/deploy-resources.yml) |
-| Naming and tagging standards that feed cost allocation | [`workloads.json`](environments/prod/workloads.json), [`naming.bicep`](modules/resource-groups/naming.bicep) |
+| Naming and tagging standards that feed cost allocation | [`workloads.json`](environments/prod/workloads.json), [`naming.bicep`](modules/naming.bicep) |
 
 ## Architecture Topology
 ```text
@@ -34,7 +34,7 @@ Tenant Root Group
 │   │  ├─ mg-contoso-us-connectivity
 │   │  │  └─ sub-contoso-us-connectivity (Subscription)
 │   │  │     ├─ rg-net-deploy-prod-cus-01   # Deployer UMI + OIDC (this subscription only)
-│   │  │     └─ rg-net-hub-prod-cus-01      # Hub VNet, Azure Firewall, VPN gateways
+│   │  │     └─ rg-net-hub-prod-cus-01      # Hub VNet (NSGs and UDRs planned; no Firewall or gateways)
 │   │  ├─ mg-contoso-us-identity
 │   │  │  └─ sub-contoso-us-identity (Subscription)
 │   │  │     ├─ rg-id-deploy-prod-cus-01    # Deployer UMI + OIDC (this subscription only)
@@ -54,10 +54,9 @@ Tenant Root Group
 │         └─ sub-contoso-us-online (Subscription)
 │            ├─ rg-online-deploy-prod-cus-01  # Deployer UMI + OIDC (this subscription only)
 │            ├─ rg-online-web-prod-cus-01     # (planned) Public web apps and microservices
-│            └─ rg-online-edge-prod-cus-01    # (planned) Application gateways, CDN, front-end routing
+│            └─ rg-online-edge-prod-cus-01    # (planned) Public web front end (no paid edge services in the lab)
 ```
-Resource names follow `<type>-<domain>-<purpose>-<env>-<region>-<nn>`, defined once per language: `Get-ResourceName` for the scripts and `naming.bicep` for Bicep. `contoso` is a placeholder organization name.
-
+Resource names follow `<type>-<domain>-<purpose>-<env>-<region>-<nn>`, defined once per language: `Get-ResourceName` for the scripts and `naming.bicep` for Bicep. `contoso` is a placeholder organization name. Naming applies to resource-level names only: management group names come from `main.bicepparam`, and subscription names follow the Phase 1 convention.
 
 ## Design decisions
 
@@ -67,6 +66,7 @@ Resource names follow `<type>-<domain>-<purpose>-<env>-<region>-<nn>`, defined o
 * **Idempotent by design:** get-or-create and drift-only writes. A re-run with nothing to change writes nothing. Tags are merged, so tags added by others are never removed.
 * **Audit before enforce:** the Microsoft cloud security benchmark is assigned as `DoNotEnforce` and is one parameter away from enforcement.
 * **Defensive details:** the OIDC subject uses the repository's immutable numeric IDs, policy assignment names are length-safe by construction, and role assignment retries absorb managed identity replication delay.
+* **Lab scope:** the connectivity public-IP exemption is pre-staged for a future hub appliance (Firewall or NVA) and unused today.
 
 ## Security model
 
@@ -81,6 +81,7 @@ Resource names follow `<type>-<domain>-<purpose>-<env>-<region>-<nn>`, defined o
   * Replace Contributor at `/` with a custom role limited to the required actions.
   * Add a condition to User Access Administrator so it can assign only approved roles.
   * Secrets are repository-level and the credential subject is branch-based, so any workflow on `main` can use any deployer. Environment-scoped credentials would narrow this.
+  * Policy assignment identities (including the benchmark) hold no roles yet, so `Modify` and `DeployIfNotExists` remediation is inactive. Grant roles when enforcement is enabled.
 
 ## Quick start
 
@@ -105,7 +106,7 @@ pwsh ./scripts/bootstrap/Initialize-SubscriptionOidc.ps1  # Phase 5: per-subscri
 | 3 | Tenant deployer identity and OIDC trust | `Initialize-TenantOidc.ps1` | Done |
 | 4 | Management groups, subscription associations, policy as code | `deploy-foundation.yml` | Done |
 | 5 | Per-subscription deployer identities and OIDC trust | `Initialize-SubscriptionOidc.ps1` | Done |
-| 6 | Hub and logs resource groups, then hub networking and workload resource groups | `deploy-resources.yml` | In progress |
+| 6 | Hub and logs resource groups, hub VNet, then spoke peering, NSGs and UDRs | `deploy-resources.yml` | In progress |
 
 ## Prerequisites
 
@@ -127,13 +128,13 @@ The table is generated: run `pwsh ./scripts/tools/Update-ReadmePrerequisites.ps1
 azure-landing-zone-bicep/
 │
 ├── .github/
-│   └── actions/                         
-│       ├── setup-bicep                  <-- Composite action: Bicep install with retry
-│       └── resolve-config               <-- Composite action: primary location and region code from main.bicepparam
+│   ├── actions/                         
+│   │   ├── setup-bicep                  <-- Composite action: Bicep install with retry
+│   │   └── resolve-config               <-- Composite action: primary location and region code from main.bicepparam
 │   ├── dependabot.yml                   <-- Weekly GitHub Actions version updates
 │   └── workflows/
 │       ├── deploy-foundation.yml        <-- MGs, policies & governance, subscription association
-│       └── deploy-resources.yml         <-- Subscription-scoped VNets, NSGs and workload RGs
+│       └── deploy-resources.yml         <-- Subscription-scoped VNets, NSGs, route tables and workload RGs
 ├── environments/
 │   └── prod/
 │       ├── main.bicep                   <-- Tenant orchestration entry point
@@ -141,7 +142,7 @@ azure-landing-zone-bicep/
 │       ├── main.bicepparam              <-- LOCAL working copy with live IDs (gitignored)
 │       ├── workloads.json               <-- Workload registry: domain, team, tags, bootstrapWorkload
 │       ├── workloads.schema.json        <-- Schema checked by the preflight
-│       ├── connectivity.bicep           <-- Subscription scope: hub & networking
+│       ├── connectivity.bicep           <-- Subscription scope: hub VNet
 │       ├── corp.bicep                   <-- Subscription scope: internal workloads
 │       ├── identity.bicep               <-- Subscription scope: identity & directory services
 │       ├── operations.bicep             <-- Subscription scope: logs & automation
@@ -150,8 +151,9 @@ azure-landing-zone-bicep/
 │   ├── management-groups/
 │   ├── governance/
 │   ├── resource-groups/
-│   ├── networking/                     <-- (planned)
-│   └── key-vault/                      <-- (planned)
+│   ├── networking/                     <-- Reusable VNet module
+│   ├── key-vault/                      <-- (planned)
+│   └── naming.bicep                     
 ├── scripts/
 │   ├── bootstrap/
 │   │   ├── Sync-Subscriptions.ps1       <-- Phase 2: discover subscriptions, fill main.bicepparam, publish *_SUB_ID secrets
@@ -293,9 +295,11 @@ az account list --all --output table
 # Policy assignments at the organization root
 az policy assignment list --scope "/providers/Microsoft.Management/managementGroups/mg-contoso-us" --query "[].{Name:name, DisplayName:displayName, Enforcement:enforcementMode}" --output table
 
+# Policy assignment identity status
+az policy assignment list --scope "/providers/Microsoft.Management/managementGroups/mg-contoso-us" --query "[].{Name:name, Identity:identity.type}" --output table
+
 # Scoped policy exemption
-$connectivitySub = az account list --query "[?ends_with(name, '-connectivity')].id | [0]" --output tsv
-az policy exemption show --name "exemption-allow-hub-public-ips" --scope "/subscriptions/$connectivitySub" --output table
+$connectivitySub = az account list --query "[?ends_with(name, '-connectivity')].id | [0]" --output tsv[cite: 3]
 ```
 
 ### Phase 5: Subscription deployer identities
@@ -334,6 +338,6 @@ gh workflow run deploy-resources.yml -f mode=deploy     # apply
   ```powershell
   foreach ($sub in (az account list --query "[].id" -o tsv)) { az group list --subscription $sub --query "[?contains(name,'-hub-') || contains(name,'-logs-')].name" -o tsv }
   ```
-* **Planned:** `modules/networking/` (hub VNet and subnets) comes next. Firewall, gateways and spoke peering are deferred until a spoke needs them.
+* **Planned:** spoke VNets with peering, NSGs and route tables. Spoke-to-spoke traffic via the hub needs a UDR with a `VirtualAppliance` next hop, so it stays off until an appliance exists. Azure Firewall, VPN/ER gateways and DNS Private Resolver are deliberately excluded to keep the lab free of hourly charges.
 
 Built by Osvaldo Ceballos.
